@@ -82,6 +82,8 @@ rego = Engine('rego', 'Rego', 's-C0', 's--C0')
 rego_pre_tc = Engine('rego_pre_tc', 'Rego (Pre-TC)', 's-C3', 's--C3')
 opa = Engine('opa', 'Rego', 's-C0', 's--C0')
 opa_tc = Engine('opa_tco', 'Rego (TC)', 's-C3', 's--C3')
+regorus = Engine('regorus', 'Regorus', 's-C5', 's--C5')
+regorus_pre_tc = Engine('regorus_pre_tc', 'Regorus (TC)', 's-C6', 's--C6')
 
 def plot_times(engines_with_data, folder, independent_var=num_entities, small=False, omit_ylabel=False, xlabel_fontsize=None, ylabel_fontsize=None):
     """
@@ -197,6 +199,8 @@ if github_data.data is not None:
             #(openfga_templates, github_templates_data),
             (rego, github_data),
             (rego_pre_tc, github_data),
+            (regorus, github_data),
+            (regorus_pre_tc, github_data),
         ),
         'output/github',
         github_num_entities,
@@ -229,6 +233,8 @@ if gdrive_data.data is not None:
             #(openfga_templates, gdrive_templates_data),
             (rego, gdrive_data),
             (rego_pre_tc, gdrive_data),
+            (regorus, gdrive_data),
+            (regorus_pre_tc, gdrive_data),
         ),
         'output/gdrive',
         gdrive_num_entities,
@@ -257,8 +263,10 @@ if tinytodo_data.data is not None:
         (
             (cedar, tinytodo_data),
             (openfga, tinytodo_data),
-            (rego, tinytodo_data),
+            (rego, tinytodo_data),            
             (rego_pre_tc, tinytodo_data),
+            (regorus, tinytodo_data),
+            (regorus_pre_tc, tinytodo_data),
         ),
         'output/tinytodo',
         tinytodo_num_entities,

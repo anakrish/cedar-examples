@@ -1,7 +1,7 @@
 use cedar_benchmarks::CedarOptEngine;
 use cedar_benchmarks::{
     CedarEngine, Engine, ExampleApp, HierarchyStats, MultiExecutionReport, OpenFgaEngine,
-    RandomBytes, RegoEngine,
+    RandomBytes, RegoEngine, RegorusEngine,
 };
 use cedar_policy_core::ast::Request;
 use cedar_policy_core::entities::{Entities, EntityJson, TCComputation};
@@ -115,6 +115,10 @@ pub enum EngineChoice {
     Rego,
     /// Rego authorization engine, pre-compute transitive closure
     RegoPreTC,
+    /// Regorus rego interpreter
+    Regorus,
+    /// Regorus rego interpreter, pre-compute transitive closure
+    RegorusPreTC,
 }
 
 impl std::fmt::Display for EngineChoice {
@@ -125,6 +129,8 @@ impl std::fmt::Display for EngineChoice {
             Self::CedarOpt => write!(f, "cedaropt"),
             Self::Rego => write!(f, "rego"),
             Self::RegoPreTC => write!(f, "rego_pre_tc"),
+            Self::Regorus => write!(f, "regorus"),
+            Self::RegorusPreTC => write!(f, "regorus_pre_tc"),
         }
     }
 }
@@ -188,6 +194,14 @@ fn run_experiment(
                 let engine = RegoEngine::new(&app, &entities);
                 (choice, Engine::RegoTC(engine))
             }
+	    EngineChoice::Regorus => {
+                let engine = RegorusEngine::new(&app, &entities);
+                (choice, Engine::Regorus(engine))
+	    }
+	    EngineChoice::RegorusPreTC => {
+                let engine = RegorusEngine::new(&app, &entities);
+                (choice, Engine::Regorus(engine))
+	    }
         });
         let cedar_entities = Entities::from_entities(
             entities.clone(),
