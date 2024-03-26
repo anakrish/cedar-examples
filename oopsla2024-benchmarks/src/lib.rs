@@ -25,6 +25,8 @@ pub use openfga_engine::OpenFgaEngine;
 mod rego_engine;
 mod rego_requests;
 pub use rego_engine::RegoEngine;
+mod regorus_engine;
+pub use regorus_engine::RegorusEngine;
 mod slicing;
 
 pub enum Engine<'a> {
@@ -33,6 +35,8 @@ pub enum Engine<'a> {
     OpenFga(OpenFgaEngine<'a>),
     Rego(RegoEngine<'a, OpenEntities>),
     RegoTC(RegoEngine<'a, Entities>),
+    Regorus(RegorusEngine<'a, OpenEntities>),
+    RegorusTC(RegorusEngine<'a, Entities>),
 }
 
 impl<'a> Engine<'a> {
@@ -54,6 +58,8 @@ impl<'a> Engine<'a> {
                         .map(move |request| e.execute(request, &slicer)),
                 )
             }
+            Self::Regorus(e) => Box::new(e.execute(requests)),
+            Self::RegorusTC(e) => Box::new(e.execute(requests)),
         }
     }
 }
