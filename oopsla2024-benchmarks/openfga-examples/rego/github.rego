@@ -1,5 +1,5 @@
 package github
-import future.keywords.in
+import future.keywords
 
 
 ################################################################################
@@ -51,13 +51,16 @@ actions = {
 ## Look up applicable actions (ex: 'write' -> 'read', 'triage', 'write')
 applicable = graph.reachable(actions, [input.action])
 
+
+capabilities := graph.reachable(input.orgs, [input.principal])
+
 ## Can a specific action be performed
 can_perform[action] = true {
 	## Look up the repo's object capability for this action
 	cap := input.resource[action]
 
 	## Can we reach that capability in the org chart?
-	cap in graph.reachable(input.orgs, [input.principal])
+	cap in capabilities # graph.reachable(input.orgs, [input.principal])
 }
 
 can_perform[action] = true  {
@@ -65,7 +68,7 @@ can_perform[action] = true  {
 	cap := input.resource.owner[action]
 
 	## Can we reach that capability in the org chart?
-	cap in graph.reachable(input.orgs, [input.principal])
+	cap in capabilities # graph.reachable(input.orgs, [input.principal])
 }
 
 
