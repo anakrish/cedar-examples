@@ -28,35 +28,33 @@ write_actions := ["Action::\"UpdateList\"", "Action::\"CreateTask\"", "Action::\
 ################################################################################
 ###### Read/Write rules
 ################################################################################
-
+reachable := graph.reachable(input.Data.Groups, [input.Request.Principal])
 
 # Check if we we're allowed to write
 allow_write = true
 # We can write if we are directly in the writers list
 {
-    some user in input.Request.Resource.Writers
-    input.Request.Principal == user
+    input.Request.Principal in input.Request.Resource.Writers
 }
 # Or if we are transitivly in a group in the writers list
-{
+else {
     some group in input.Request.Resource.Writers
-    group in graph.reachable(input.Data.Groups, [input.Request.Principal])
+    group in reachable
 }
 
 # Check if we we're allowed to read
 allow_read = true
 # We can read if we are directly in the readers list
 {
-    some user in input.Request.Resource.Readers
-    input.Request.Principal == user
+    input.Request.Principal in input.Request.Resource.Readers
 }
 # Or if we are transitivly in a group in the readers list
-{
+else {
     some group in input.Request.Resource.Readers
-    group in graph.reachable(input.Data.Groups, [input.Request.Principal])
+    group in reachable
 }
 # Or if we are allowed to write
-{
+else {
     allow_write
 }
 
@@ -83,20 +81,23 @@ allow = true {
 }
 
 # Any user can take actions on resources they own
-allow = true {
+# allow = true {
+else {
     input.Request.Resource.Owner == input.Request.Principal
 }
 
 
 # Read actions are allowed if the user can read
-allow = true {
-    read_actions[_] = input.Request.Action
+# allow = true {
+else {
+    input.Request.Action in read_actions
     allow_read
 }
 
 # Write actions are allowed if the user can write
-allow = true {
-    write_actions[_] = input.Request.Action
+# allow = true {
+else {
+    input.Request.Action in write_actions
     allow_write
 }
 
