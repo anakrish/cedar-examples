@@ -48,36 +48,43 @@ actions = {
 	"Action::\"admin\"": [],
 }
 
-## Look up applicable actions (ex: 'write' -> 'read', 'triage', 'write')
-applicable = graph.reachable(actions, [input.action])
 
-
-capabilities := graph.reachable(input.orgs, [input.principal])
+preprocess := {
+  ## Look up applicable actions (ex: 'write' -> 'read', 'triage', 'write')
+  "applicable" : { action : reachable |
+     some action,_ in actions;
+     reachable := graph.reachable(actions, [action])
+   },
+   "capabilities": { principal : capabilities |
+     some principal,_ in input.orgs
+     capabilities := graph.reachable(input.orgs, [principal])
+   }
+}
 
 ## Can a specific action be performed
-can_perform[action] = true {
+can_perform(action) {
 	## Look up the repo's object capability for this action
 	cap := input.resource[action]
 
 	## Can we reach that capability in the org chart?
-	cap in capabilities # graph.reachable(input.orgs, [input.principal])
+	cap in data.capabilities[input.principal] # graph.reachable(input.orgs, [input.principal])
 }
 
-can_perform[action] = true  {
+#can_perform[action] = true  {
+else {
 	## Do the same thing, but user the owner's object capability
 	cap := input.resource.owner[action]
 
 	## Can we reach that capability in the org chart?
-	cap in capabilities # graph.reachable(input.orgs, [input.principal])
+	cap in data.capabilities[input.principal] # graph.reachable(input.orgs, [input.principal])
 }
 
 
 
 ## We are authorized if any of the applicable actions are allowed
-allow = true {
-	some action
-	action in applicable
-	can_perform[action]
+allow {
+	action := data.applicable[input.action][_]
+	can_perform(action)
 }
 
 

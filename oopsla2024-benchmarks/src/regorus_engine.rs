@@ -122,18 +122,25 @@ pub fn run_rego_requests(payload: String) -> impl Iterator<Item = SingleExecutio
             )
             .unwrap();
 
+	let namespace = payload["Namespace"].as_string().unwrap().to_string();
         let query = format!(
             "data.{}.allow",
-            payload["Namespace"].as_string().unwrap().to_string(),
+            namespace
         );
 
-        for req in payload["Requests"].as_array().unwrap() {
+        for (idx, req) in payload["Requests"].as_array().unwrap().iter().enumerate() {
             let query = query.clone();
 
+	    if idx == 0 {
+		engine.clear_data();
+		engine.set_input(req.clone());
+		let data = engine.eval_rule(format!("data.{}.preprocess", namespace)).unwrap();
+		engine.add_data(data).unwrap();
+	    }
+	    
             let start_time = std::time::Instant::now();
             engine.set_input(req.clone());
             let decision = engine.eval_rule(query).unwrap() == Value::Bool(true);
-            //let decision = engine.eval_allow_query(query, false);
             let dur_nanoseconds = start_time.elapsed().as_nanos() as u64;
 
             test_outputs.push(GoTestOutput {
