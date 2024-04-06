@@ -32,13 +32,12 @@ pub struct GithubRequest {
     pub principal: String,
     pub action: String,
     pub resource: GithubRepo,
-    pub orgs: OrgChart,
+    pub orgs: Option<OrgChart>,
 }
 
 impl GithubRequest {
-    pub fn new(r: &Request, es: &impl EntityGraph) -> Self {
+    pub fn new(r: &Request, es: &impl EntityGraph, orgs: Option<OrgChart>) -> Self {
         let resource = GithubRepo::new(r.resource().uid().unwrap(), es);
-        let orgs = make_org_chart(es);
         Self {
             principal: r.principal().uid().unwrap().to_string(),
             action: r.action().uid().unwrap().to_string(),

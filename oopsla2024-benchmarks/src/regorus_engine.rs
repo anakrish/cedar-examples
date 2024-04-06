@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::entity_graph::EntityGraph;
 use crate::rego_requests::gdrive;
-use crate::rego_requests::github::{GithubOpaInput, GithubRequest};
+use crate::rego_requests::github::{GithubOpaInput, GithubRequest, make_org_chart};
 use crate::tinytodo_generator::{
     cedar::Request as TinyTodoCedarRequest, entities::Entities as TinyTodoGeneratedEntities,
     opa::to_opa,
@@ -52,9 +52,10 @@ impl<'a, T: EntityGraph> RegorusEngine<'a, T> {
                 run_rego_requests(opa_json_payload)
             }
             "github" => {
+                let orgs = make_org_chart(&self.entities);
                 let requests: Vec<_> = requests
                     .iter()
-                    .map(|r| GithubRequest::new(r, &self.entities))
+                    .map(|r| GithubRequest::new(r, &self.entities, Some(orgs.clone())))
                     .collect();
                 let json_payload = serde_json::to_string(&GithubOpaInput::new(requests)).unwrap();
                 run_rego_requests(json_payload)
@@ -122,22 +123,21 @@ pub fn run_rego_requests(payload: String) -> impl Iterator<Item = SingleExecutio
             )
             .unwrap();
 
-	let namespace = payload["Namespace"].as_string().unwrap().to_string();
-        let query = format!(
-            "data.{}.allow",
-            namespace
-        );
+        let namespace = payload["Namespace"].as_string().unwrap().to_string();
+        let query = format!("data.{}.allow", namespace);
 
         for (idx, req) in payload["Requests"].as_array().unwrap().iter().enumerate() {
             let query = query.clone();
 
-	    if idx == 0 {
-		engine.clear_data();
-		engine.set_input(req.clone());
-		let data = engine.eval_rule(format!("data.{}.preprocess", namespace)).unwrap();
-		engine.add_data(data).unwrap();
-	    }
-	    
+            if idx == 0 {
+                engine.clear_data();
+                engine.set_input(req.clone());
+                let data = engine
+                    .eval_rule(format!("data.{}.preprocess", namespace))
+                    .unwrap();
+                engine.add_data(data).unwrap();
+            }
+
             let start_time = std::time::Instant::now();
             engine.set_input(req.clone());
             let decision = engine.eval_rule(query).unwrap() == Value::Bool(true);
