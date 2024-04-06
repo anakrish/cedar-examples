@@ -61,30 +61,30 @@ preprocess := {
    }
 }
 
-## Can a specific action be performed
-can_perform(action) {
-	## Look up the repo's object capability for this action
-	cap := input.resource[action]
-
-	## Can we reach that capability in the org chart?
-	cap in data.capabilities[input.principal] # graph.reachable(input.orgs, [input.principal])
-}
-
-#can_perform[action] = true  {
-else {
-	## Do the same thing, but user the owner's object capability
-	cap := input.resource.owner[action]
-
-	## Can we reach that capability in the org chart?
-	cap in data.capabilities[input.principal] # graph.reachable(input.orgs, [input.principal])
-}
-
-
 
 ## We are authorized if any of the applicable actions are allowed
 allow {
-	action := data.applicable[input.action][_]
-	can_perform(action)
-}
+      # What capabilities does principal have?
+      capabilities := data.capabilities[input.principal]
 
+      # For each action and associated capability in the resource
+      some action, cap in input.resource
 
+      # Does principal have the capability?
+      cap in capabilities
+
+      # Is the action applicable?
+      action in data.applicable[input.action]
+} else {
+      # What capabilities does principal have?
+      capabilities := data.capabilities[input.principal]
+
+      # For each action and associated capability in the resource's owner
+      some action, cap in input.resource.owner
+
+      # Does principal have the capability?
+      cap in capabilities
+
+      # Is the action applicable?
+      action in data.applicable[input.action]
+} 

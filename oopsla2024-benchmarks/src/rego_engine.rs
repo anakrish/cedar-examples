@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::entity_graph::EntityGraph;
 use crate::rego_requests::gdrive;
-use crate::rego_requests::github::{GithubOpaInput, GithubRequest};
+use crate::rego_requests::github::{make_org_chart, GithubOpaInput, GithubRequest};
 use crate::tinytodo_generator::{
     cedar::Request as TinyTodoCedarRequest, entities::Entities as TinyTodoGeneratedEntities,
     opa::to_opa,
@@ -54,9 +54,10 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
                 run_opa_requests(&opa_json_payload)
             }
             "github" => {
+                let orgs = make_org_chart(&self.entities);
                 let requests: Vec<_> = requests
                     .iter()
-                    .map(|r| GithubRequest::new(r, &self.entities))
+                    .map(|r| GithubRequest::new(r, &self.entities, Some(orgs.clone())))
                     .collect();
                 let json_payload = serde_json::to_value(GithubOpaInput::new(requests)).unwrap();
                 run_opa_requests(&json_payload)
