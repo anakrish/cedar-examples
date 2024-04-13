@@ -67,24 +67,19 @@ allow {
       # What capabilities does principal have?
       capabilities := data.capabilities[input.principal]
 
-      # For each action and associated capability in the resource
-      some action, cap in input.resource
-
+      # For each applicable action
+      some action in data.applicable[input.action]
+      
       # Does principal have the capability?
-      cap in capabilities
+      input.resource[action] in capabilities
 
-      # Is the action applicable?
-      action in data.applicable[input.action]
 } else {
       # What capabilities does principal have?
       capabilities := data.capabilities[input.principal]
 
-      # For each action and associated capability in the resource's owner
-      some action, cap in input.resource.owner
-
+      # For each applicable action
+      some action in data.applicable[input.action]
+      
       # Does principal have the capability?
-      cap in capabilities
-
-      # Is the action applicable?
-      action in data.applicable[input.action]
+      input.resource.owner[action] in capabilities
 } 
