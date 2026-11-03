@@ -94,10 +94,10 @@ def build_entities(num_users, num_groups, num_docs, num_folders, connection_prob
                 parents.append(euid("Folder", "folder_"+str(j)))
         for j in range(num_users):
             if random.random() < chance_user_view_doc:
-                parents.append(euid("View", "User "+str(j)))
+                parents.append(euid("View", "User user_"+str(j)))
         for j in range(num_groups):
             if random.random() < chance_group_view_doc:
-                parents.append(euid("View", "Group "+str(j)))
+                parents.append(euid("View", "Group group_"+str(j)))
         entities.append(doc_entity(doc_name, parents))
     for i in range(num_folders):
         folder_name = "folder_"+str(i)
@@ -107,10 +107,10 @@ def build_entities(num_users, num_groups, num_docs, num_folders, connection_prob
                 parents.append(euid("Folder", "folder_"+str(j)))
         for j in range(num_users):
             if random.random() < chance_user_view_folder:
-                parents.append(euid("View", "User "+str(j)))
+                parents.append(euid("View", "User user_"+str(j)))
         for j in range(num_groups):
             if random.random() < chance_group_view_folder:
-                parents.append(euid("View", "Group "+str(j)))
+                parents.append(euid("View", "Group group_"+str(j)))
         entities.append(folder_entity(folder_name, parents))
 
     handle = open(out_file, "w") if out_file is not None else sys.stdout

@@ -25,8 +25,11 @@ cedar-java-partial-evaluation/app/bin/*
 # Don't check cargo build artifacts
 cedar-rust-hello-world/Cargo.lock
 cedar-rust-hello-world/target/*
-oopsla2024-benchmarks/Cargo.lock
 oopsla2024-benchmarks/target/*
+oopsla2024-benchmarks/cedar-spec/
+oopsla2024-benchmarks/.venv/
+oopsla2024-benchmarks/output/
+oopsla2024-benchmarks/output-all-apps-interrupted/
 tinytodo/Cargo.lock
 tinytodo/target/*
 

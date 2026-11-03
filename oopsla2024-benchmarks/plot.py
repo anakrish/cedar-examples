@@ -1,7 +1,13 @@
 import matplotlib.pyplot as plt
 import pandas
 import os
+import sys
 import pdb
+import hashlib
+import json
+import math
+
+output_dir = sys.argv[1] if len(sys.argv) > 1 else 'output'
 
 # we'd love to use str.removeprefix() but it only exists in Python 3.9+ and AL2 is old
 # so we have this instead
@@ -82,6 +88,10 @@ rego = Engine('rego', 'Rego', 's-C0', 's--C0')
 rego_pre_tc = Engine('rego_pre_tc', 'Rego (Pre-TC)', 's-C3', 's--C3')
 opa = Engine('opa', 'Rego', 's-C0', 's--C0')
 opa_tc = Engine('opa_tco', 'Rego (TC)', 's-C3', 's--C3')
+regorus = Engine('regorus', 'Regorus interpreter', 's-C5', 's--C5')
+regorus_pre_tc = Engine('regorus_pre_tc', 'Regorus interpreter (TC)', 's-C6', 's--C6')
+regorus_rvm = Engine('regorus_rvm', 'Regorus RVM', '^-C0', '^--C0')
+regorus_rvm_pre_tc = Engine('regorus_rvm_pre_tc', 'Regorus RVM (TC)', '^-C3', '^--C3')
 
 def plot_times(engines_with_data, folder, independent_var=num_entities, small=False, omit_ylabel=False, xlabel_fontsize=None, ylabel_fontsize=None):
     """
@@ -122,6 +132,7 @@ def plot_times(engines_with_data, folder, independent_var=num_entities, small=Fa
     except FileExistsError:
         pass
     plt.savefig(folder + '/times_vs_' + independent_var.data_name + '.pdf')
+    plt.savefig(folder + '/times_vs_' + independent_var.data_name + '.png', dpi=180)
     plt.close()
 
 def plot_parents(data, folder, independent_var=num_entities):
@@ -189,11 +200,11 @@ def plot_openfga_tuples(data, folder, independent_var=num_entities, alt_data=Non
         plt.savefig(folder + '/num_tuples_vs_' + independent_var.data_name + '.pdf')
     plt.close()
 
-github_data = DataSource("output/github.csv", "github")
-github_templates_data = DataSource("output/github-templates.csv", "github-templates")
-gdrive_data = DataSource("output/gdrive.csv", "gdrive")
-gdrive_templates_data = DataSource("output/gdrive-templates.csv", "gdrive-templates")
-tinytodo_data = DataSource("output/tinytodo.csv", "tinytodo")
+github_data = DataSource(os.path.join(output_dir, "github.csv"), "github")
+github_templates_data = DataSource(os.path.join(output_dir, "github-templates.csv"), "github-templates")
+gdrive_data = DataSource(os.path.join(output_dir, "gdrive.csv"), "gdrive")
+gdrive_templates_data = DataSource(os.path.join(output_dir, "gdrive-templates.csv"), "gdrive-templates")
+tinytodo_data = DataSource(os.path.join(output_dir, "tinytodo.csv"), "tinytodo")
 
 if github_data.data is not None:
     github_num_entities = IndependentVar("num_entities", "Number of Users, Teams, Repos, and Orgs")
@@ -205,16 +216,20 @@ if github_data.data is not None:
             #(openfga_templates, github_templates_data),
             (rego, github_data),
             (rego_pre_tc, github_data),
+            (regorus, github_data),
+            (regorus_pre_tc, github_data),
+            (regorus_rvm, github_data),
+            (regorus_rvm_pre_tc, github_data),
         ),
-        'output/github',
+        os.path.join(output_dir, 'github'),
         github_num_entities,
         small=True,
         omit_ylabel=False,
         xlabel_fontsize='large',
     )
-    plot_parents(github_data, 'output/github', github_num_entities)
-    plot_allows_denies(github_data, 'output/github', github_num_entities)
-    plot_openfga_tuples(github_data, 'output/github', github_num_entities, alt_data=github_templates_data, alt_label="(Templates)")
+    plot_parents(github_data, os.path.join(output_dir, 'github'), github_num_entities)
+    plot_allows_denies(github_data, os.path.join(output_dir, 'github'), github_num_entities)
+    plot_openfga_tuples(github_data, os.path.join(output_dir, 'github'), github_num_entities, alt_data=github_templates_data, alt_label="(Templates)")
     if github_templates_data.data is not None:
         plot_times(
             (
@@ -222,7 +237,7 @@ if github_data.data is not None:
                 (cedar_templates, github_templates_data),
                 (cedar_opt, github_templates_data),
             ),
-            'output/github-slicing',
+            os.path.join(output_dir, 'github-slicing'),
             github_num_entities,
             small=True,
         )
@@ -237,16 +252,20 @@ if gdrive_data.data is not None:
             #(openfga_templates, gdrive_templates_data),
             (rego, gdrive_data),
             (rego_pre_tc, gdrive_data),
+            (regorus, gdrive_data),
+            (regorus_pre_tc, gdrive_data),
+            (regorus_rvm, gdrive_data),
+            (regorus_rvm_pre_tc, gdrive_data),
         ),
-        'output/gdrive',
+        os.path.join(output_dir, 'gdrive'),
         gdrive_num_entities,
         small=True,
         xlabel_fontsize='large',
         ylabel_fontsize='large',
     )
-    plot_parents(gdrive_data, 'output/gdrive', gdrive_num_entities)
-    plot_allows_denies(gdrive_data, 'output/gdrive', gdrive_num_entities)
-    plot_openfga_tuples(gdrive_data, 'output/gdrive', gdrive_num_entities, alt_data=gdrive_templates_data, alt_label="(Templates)")
+    plot_parents(gdrive_data, os.path.join(output_dir, 'gdrive'), gdrive_num_entities)
+    plot_allows_denies(gdrive_data, os.path.join(output_dir, 'gdrive'), gdrive_num_entities)
+    plot_openfga_tuples(gdrive_data, os.path.join(output_dir, 'gdrive'), gdrive_num_entities, alt_data=gdrive_templates_data, alt_label="(Templates)")
     if gdrive_templates_data.data is not None:
         plot_times(
             (
@@ -254,7 +273,7 @@ if gdrive_data.data is not None:
                 (cedar_templates, gdrive_templates_data),
                 (cedar_opt, gdrive_templates_data),
             ),
-            'output/gdrive-slicing',
+            os.path.join(output_dir, 'gdrive-slicing'),
             gdrive_num_entities,
             small=True,
         )
@@ -267,13 +286,115 @@ if tinytodo_data.data is not None:
             (openfga, tinytodo_data),
             (rego, tinytodo_data),
             (rego_pre_tc, tinytodo_data),
+            (regorus, tinytodo_data),
+            (regorus_pre_tc, tinytodo_data),
+            (regorus_rvm, tinytodo_data),
+            (regorus_rvm_pre_tc, tinytodo_data),
         ),
-        'output/tinytodo',
+        os.path.join(output_dir, 'tinytodo'),
         tinytodo_num_entities,
         small=True,
         omit_ylabel=False,
         xlabel_fontsize='large',
     )
-    plot_parents(tinytodo_data, 'output/tinytodo', tinytodo_num_entities)
-    plot_allows_denies(tinytodo_data, 'output/tinytodo', tinytodo_num_entities)
-    plot_openfga_tuples(tinytodo_data, 'output/tinytodo', tinytodo_num_entities)
+    plot_parents(tinytodo_data, os.path.join(output_dir, 'tinytodo'), tinytodo_num_entities)
+    plot_allows_denies(tinytodo_data, os.path.join(output_dir, 'tinytodo'), tinytodo_num_entities)
+    plot_openfga_tuples(tinytodo_data, os.path.join(output_dir, 'tinytodo'), tinytodo_num_entities)
+
+figure14_data = (
+    (gdrive_data, '(a) gdrive example', 'Number of Users, Groups,\nDocuments, and Folders'),
+    (github_data, '(b) github example', 'Number of Users, Teams,\nRepos, and Orgs'),
+    (tinytodo_data, '(c) TinyTodo example', 'Number of Users,\nTeams, and Lists'),
+)
+filename = os.path.join(output_dir, 'figure14_cedar_vs_rvm')
+for extension in ('.pdf', '.png', '_summary.csv'):
+    if os.path.exists(filename + extension):
+        os.remove(filename + extension)
+
+figure14_manifest = None
+if all(
+    data.data is not None
+    and all(column in data.data for column in (
+        'cedar median_dur_micros', 'cedar p99_dur_micros',
+        'regorus_rvm median_dur_micros', 'regorus_rvm p99_dur_micros',
+    ))
+    for data, _, _ in figure14_data
+):
+    manifest_path = os.path.join(output_dir, 'run-manifest.json')
+    if not os.path.isfile(manifest_path):
+        raise ValueError('Combined figure requires run-manifest.json from a fresh benchmark run')
+    with open(manifest_path) as file:
+        figure14_manifest = json.load(file)
+    if not figure14_manifest['complete']:
+        raise ValueError('Cannot plot an incomplete benchmark run')
+    if not {'gdrive', 'github', 'tinytodo'}.issubset(figure14_manifest['apps']):
+        raise ValueError('Combined figure CSVs do not match the applications in the run manifest')
+    if not {'cedar', 'regorus_rvm'}.issubset(figure14_manifest['engines']):
+        raise ValueError('Combined figure requires Cedar and Regorus RVM in the same run')
+    source_sha256 = figure14_manifest['source_sha256']
+    if source_sha256 is not None:
+        with open(os.path.join(output_dir, 'source.tar.gz'), 'rb') as file:
+            actual_sha256 = hashlib.sha256(file.read()).hexdigest()
+        if actual_sha256 != source_sha256:
+            raise ValueError('Run manifest source fingerprint does not match the source archive')
+    else:
+        print('Warning: direct CLI run has no source archive; use reproduce.sh for source provenance')
+    expected_rows = sorted(
+        (entities, unstructured)
+        for entities in figure14_manifest['num_entities']
+        for unstructured in figure14_manifest['unstructured_bytes']
+    )
+    expected_count = figure14_manifest['num_hierarchies'] * figure14_manifest['num_requests']
+    if expected_count <= 0:
+        raise ValueError('Combined figure requires a positive request count')
+    for data, _, _ in figure14_data:
+        observed_rows = sorted(zip(data.data['num_entities'], data.data['unstructured_bytes']))
+        if observed_rows != expected_rows:
+            raise ValueError(f'{data.pretty_name}: CSV sizes do not match the run manifest')
+        for engine in ('cedar', 'regorus_rvm'):
+            if not (data.data[f'{engine} num_requests'] == expected_count).all():
+                raise ValueError(f'{data.pretty_name}: {engine} request counts do not match the run manifest')
+            if not (data.data[f'{engine} mean_num_errors'] == 0).all():
+                raise ValueError(f'{data.pretty_name}: {engine} reported evaluation errors')
+            for statistic in ('median_dur_micros', 'p99_dur_micros'):
+                if not all(math.isfinite(value) and value >= 0
+                           for value in data.data[f'{engine} {statistic}']):
+                    raise ValueError(f'{data.pretty_name}: invalid {engine} {statistic}')
+        if not data.data['cedar % allows'].equals(data.data['regorus_rvm % allows']):
+            raise ValueError(f'{data.pretty_name}: engine allow rates do not match')
+    if len(figure14_manifest['unstructured_bytes']) != 1:
+        print('Skipping combined Figure 14: multiple unstructured-byte settings need separate panels')
+
+if figure14_manifest is not None and len(figure14_manifest['unstructured_bytes']) == 1:
+    with plt.rc_context({'font.size': 10, 'pdf.fonttype': 42, 'ps.fonttype': 42}):
+        fig, axes = plt.subplots(1, 3, figsize=(13.2, 4.2))
+        summary = []
+        for ax, (data, panel_label, xlabel) in zip(axes, figure14_data):
+            plt.sca(ax)
+            cedar.plot_times(data)
+            regorus_rvm.plot_times(data)
+            ax.set_ylim(bottom=0)
+            ax.set_xlabel(xlabel)
+            ax.text(0.5, -0.34, panel_label, transform=ax.transAxes,
+                    ha='center', va='top', fontsize=12)
+            summary.append({
+                'app': data.pretty_name,
+                'cedar_average_median_us': cedar.report_avg_median(data),
+                'rvm_average_median_us': regorus_rvm.report_avg_median(data),
+                'cedar_average_p99_us': data.data['cedar p99_dur_micros'].mean(),
+                'rvm_average_p99_us': data.data['regorus_rvm p99_dur_micros'].mean(),
+                'median_speedup_cedar_over_rvm':
+                    cedar.report_avg_median(data) / regorus_rvm.report_avg_median(data),
+            })
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc='upper center', ncol=4, frameon=False)
+        fig.supylabel('authorization time (µs)', x=0.01)
+        fig.text(0.5, 0.02,
+                 'Prepared-data steady-state evaluation; preprocessing and compilation excluded',
+                 ha='center', fontsize=9)
+        fig.subplots_adjust(left=0.065, right=0.99, bottom=0.32, top=0.85, wspace=0.27)
+        fig.savefig(filename + '.pdf')
+        fig.savefig(filename + '.png', dpi=200)
+        plt.close(fig)
+        pandas.DataFrame(summary).to_csv(filename + '_summary.csv', index=False)
+        print('Figure 14-style comparison: ' + filename + '.pdf')

@@ -43,43 +43,48 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
     }
 
     pub fn execute(&self, requests: Vec<Request>) -> impl Iterator<Item = SingleExecutionReport> {
-        match self.app.name {
-            "tinytodo" => {
-                let requests: Vec<_> = requests
-                    .into_iter()
-                    .map(TinyTodoCedarRequest::from)
-                    .collect();
-                let entities = TinyTodoGeneratedEntities::from_cedar_entities(self.entities.iter());
-                let opa_json_payload = serde_json::to_value(to_opa(&entities, &requests)).unwrap();
-                run_opa_requests(&opa_json_payload)
-            }
-            "github" => {
-                let requests: Vec<_> = requests
-                    .iter()
-                    .map(|r| GithubRequest::new(r, &self.entities))
-                    .collect();
-                let json_payload = serde_json::to_value(GithubOpaInput::new(requests)).unwrap();
-                run_opa_requests(&json_payload)
-            }
-            "gdrive" => {
-                let closed = cedar_policy_core::entities::Entities::from_entities(
-                    self.entities.iter(),
-                    None::<&NoEntitiesSchema>,
-                    cedar_policy_core::entities::TCComputation::ComputeNow,
-                    Extensions::all_available(),
-                )
-                .unwrap();
-                let requests: Vec<_> = requests
-                    .iter()
-                    .map(|r| gdrive::Request::new(r, &self.entities, &closed))
-                    .collect();
-                let json_payload = serde_json::to_value(gdrive::Input::new(requests)).unwrap();
-                run_opa_requests(&json_payload)
-            }
-            appname => {
-                warn!("Rego engine for {appname} is not yet implemented; not collecting data for Rego with {appname}");
-                run_opa_requests(&serde_json::json!([]))
-            }
+        run_opa_requests(&request_payload(self.app, &self.entities, requests))
+    }
+}
+
+pub(crate) fn request_payload(
+    app: &ExampleApp,
+    entities: &impl EntityGraph,
+    requests: Vec<Request>,
+) -> Value {
+    match app.name {
+        "tinytodo" => {
+            let requests: Vec<_> = requests
+                .into_iter()
+                .map(TinyTodoCedarRequest::from)
+                .collect();
+            let entities = TinyTodoGeneratedEntities::from_cedar_entities(entities.iter());
+            serde_json::to_value(to_opa(&entities, &requests)).unwrap()
+        }
+        "github" => {
+            let requests: Vec<_> = requests
+                .iter()
+                .map(|r| GithubRequest::new(r, entities))
+                .collect();
+            serde_json::to_value(GithubOpaInput::new(requests)).unwrap()
+        }
+        "gdrive" => {
+            let closed = cedar_policy_core::entities::Entities::from_entities(
+                entities.iter(),
+                None::<&NoEntitiesSchema>,
+                cedar_policy_core::entities::TCComputation::ComputeNow,
+                Extensions::all_available(),
+            )
+            .unwrap();
+            let requests: Vec<_> = requests
+                .iter()
+                .map(|r| gdrive::Request::new(r, entities, &closed))
+                .collect();
+            serde_json::to_value(gdrive::Input::new(requests, entities, &closed)).unwrap()
+        }
+        appname => {
+            warn!("Rego engine for {appname} is not yet implemented; not collecting data for Rego with {appname}");
+            serde_json::json!([])
         }
     }
 }

@@ -1,5 +1,5 @@
 use arbitrary::Unstructured;
-use average::{Estimate, Mean, Quantile};
+use average::{Estimate, Mean};
 use cedar_policy_core::{
     ast::{EntityType, Request},
     authorizer::{AuthorizationError, Decision},
@@ -25,6 +25,8 @@ pub use openfga_engine::OpenFgaEngine;
 mod rego_engine;
 mod rego_requests;
 pub use rego_engine::RegoEngine;
+mod regorus_engine;
+pub use regorus_engine::{RegorusBackend, RegorusEngine};
 mod slicing;
 
 pub enum Engine<'a> {
@@ -33,6 +35,8 @@ pub enum Engine<'a> {
     OpenFga(OpenFgaEngine<'a>),
     Rego(RegoEngine<'a, OpenEntities>),
     RegoTC(RegoEngine<'a, Entities>),
+    Regorus(RegorusEngine<'a, OpenEntities>),
+    RegorusTC(RegorusEngine<'a, Entities>),
 }
 
 impl<'a> Engine<'a> {
@@ -42,12 +46,32 @@ impl<'a> Engine<'a> {
         requests: Vec<Request>,
     ) -> Box<dyn Iterator<Item = SingleExecutionReport> + 'b> {
         match self {
-            Self::Cedar(e) => Box::new(requests.into_iter().map(|req| e.execute(req))),
+            Self::Cedar(e) => {
+                if let Some(first) = requests.first() {
+                    let warmup = e.execute(first.clone());
+                    assert!(
+                        warmup.errors.is_empty(),
+                        "Cedar warm-up reported errors: {:?}",
+                        warmup.errors
+                    );
+                }
+                Box::new(requests.into_iter().map(|req| e.execute(req)))
+            }
             Self::OpenFga(e) => Box::new(requests.into_iter().map(|req| e.execute(req))),
             Self::Rego(e) => Box::new(e.execute(requests)),
             Self::RegoTC(e) => Box::new(e.execute(requests)),
+            Self::Regorus(e) => Box::new(e.execute(requests)),
+            Self::RegorusTC(e) => Box::new(e.execute(requests)),
             Self::CedarOpt(e) => {
                 let slicer = e.get_slicer();
+                if let Some(first) = requests.first() {
+                    let warmup = e.execute(first.clone(), &slicer);
+                    assert!(
+                        warmup.errors.is_empty(),
+                        "CedarOpt warm-up reported errors: {:?}",
+                        warmup.errors
+                    );
+                }
                 Box::new(
                     requests
                         .into_iter()
@@ -74,12 +98,8 @@ pub struct SingleExecutionReport {
 pub struct MultiExecutionReport {
     /// Mean execution time of `is_authorized()`, in microseconds
     mean_dur_micros: Mean,
-    /// Median execution time of `is_authorized()`, in microseconds
-    median_dur_micros: Quantile,
-    /// P90 execution time of `is_authorized()`, in microseconds
-    p90_dur_micros: Quantile,
-    /// P99 execution time of `is_authorized()`, in microseconds
-    p99_dur_micros: Quantile,
+    /// Request durations in microseconds, retained for exact empirical quantiles
+    durations_micros: Vec<f64>,
     /// Mean number of allows (per request -- this will be between 0 and 1)
     allows: Mean,
     /// Mean number of denies (per request -- this will be between 0 and 1)
@@ -97,9 +117,7 @@ impl MultiExecutionReport {
     pub fn new() -> Self {
         Self {
             mean_dur_micros: Mean::new(),
-            median_dur_micros: Quantile::new(0.50),
-            p90_dur_micros: Quantile::new(0.90),
-            p99_dur_micros: Quantile::new(0.99),
+            durations_micros: Vec::new(),
             allows: Mean::new(),
             denies: Mean::new(),
             mean_num_errors: Mean::new(),
@@ -110,18 +128,9 @@ impl MultiExecutionReport {
 
     /// Add a data point to the report
     pub fn add(&mut self, single_report: SingleExecutionReport) {
-        self.mean_dur_micros.add(f64::from(
-            u32::try_from(single_report.dur.as_micros()).unwrap(),
-        ));
-        self.median_dur_micros.add(f64::from(
-            u32::try_from(single_report.dur.as_micros()).unwrap(),
-        ));
-        self.p90_dur_micros.add(f64::from(
-            u32::try_from(single_report.dur.as_micros()).unwrap(),
-        ));
-        self.p99_dur_micros.add(f64::from(
-            u32::try_from(single_report.dur.as_micros()).unwrap(),
-        ));
+        let micros = single_report.dur.as_secs_f64() * 1_000_000.0;
+        self.mean_dur_micros.add(micros);
+        self.durations_micros.push(micros);
         match single_report.decision {
             Decision::Allow => {
                 self.allows.add(1.0);
@@ -146,16 +155,28 @@ impl MultiExecutionReport {
         ));
     }
 
+    fn duration_quantiles(&self) -> [f64; 3] {
+        let mut durations = self.durations_micros.clone();
+        durations.sort_unstable_by(f64::total_cmp);
+        [0.50, 0.90, 0.99].map(|quantile| {
+            if durations.is_empty() {
+                // Unsupported OPA workloads intentionally have no observations.
+                return f64::NAN;
+            }
+            let position = quantile * (durations.len() - 1) as f64;
+            let lower = position.floor() as usize;
+            let upper = position.ceil() as usize;
+            durations[lower] + (durations[upper] - durations[lower]) * position.fract()
+        })
+    }
+
     /// Print the report's contents to the provided stream (e.g. stdout)
     pub fn print(&self, f: &mut impl std::io::Write) -> std::io::Result<()> {
+        let [median, p90, p99] = self.duration_quantiles();
         writeln!(f, "mean duration: {:.3} µs", self.mean_dur_micros.mean())?;
-        writeln!(
-            f,
-            "median duration: {:.3} µs",
-            self.median_dur_micros.quantile()
-        )?;
-        writeln!(f, "p90 duration: {:.3} µs", self.p90_dur_micros.quantile())?;
-        writeln!(f, "p99 duration: {:.3} µs", self.p99_dur_micros.quantile())?;
+        writeln!(f, "median duration: {median:.3} µs")?;
+        writeln!(f, "p90 duration: {p90:.3} µs")?;
+        writeln!(f, "p99 duration: {p99:.3} µs")?;
         writeln!(
             f,
             "{:.1}% allows and {:.1}% denies",
@@ -183,24 +204,26 @@ impl MultiExecutionReport {
     pub fn csv_header(f: &mut impl std::io::Write, prefix: &str) -> std::io::Result<()> {
         write!(
             f,
-            "\"{prefix} mean_dur_micros\",\"{prefix} median_dur_micros\",\"{prefix} p90_dur_micros\",\"{prefix} p99_dur_micros\",\"{prefix} % allows\",\"{prefix} % denies\",\"{prefix} mean_num_errors\",\"{prefix} mean_context_attrs\""
+            "\"{prefix} mean_dur_micros\",\"{prefix} median_dur_micros\",\"{prefix} p90_dur_micros\",\"{prefix} p99_dur_micros\",\"{prefix} % allows\",\"{prefix} % denies\",\"{prefix} mean_num_errors\",\"{prefix} mean_context_attrs\",\"{prefix} num_requests\""
         )?;
         Ok(())
     }
 
     /// Print the report's contents as a CSV row (with no newline or trailing comma)
     pub fn csv_row(&self, f: &mut impl std::io::Write) -> std::io::Result<()> {
+        let [median, p90, p99] = self.duration_quantiles();
         write!(
             f,
-            "{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{}",
             self.mean_dur_micros.mean(),
-            self.median_dur_micros.quantile(),
-            self.p90_dur_micros.quantile(),
-            self.p99_dur_micros.quantile(),
+            median,
+            p90,
+            p99,
             self.allows.mean(),
             self.denies.mean(),
             self.mean_num_errors.mean(),
             self.mean_context_attrs.mean(),
+            self.durations_micros.len(),
         )?;
         Ok(())
     }
@@ -290,5 +313,33 @@ impl RandomBytes {
         self.bytes.clear();
         self.bytes.resize_with(num_bytes, || self.rng.gen());
         Unstructured::new(&self.bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duration_quantiles_retain_precision_and_count_every_request() {
+        let mut report = MultiExecutionReport::new();
+        for nanos in [4125, 125, 625, 375] {
+            report.add(SingleExecutionReport {
+                dur: Duration::from_nanos(nanos),
+                decision: Decision::Deny,
+                errors: vec![],
+                context_attrs: 0,
+            });
+        }
+        for (actual, expected) in report
+            .duration_quantiles()
+            .into_iter()
+            .zip([0.5, 3.075, 4.02])
+        {
+            assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+        }
+        let mut row = Vec::new();
+        report.csv_row(&mut row).unwrap();
+        assert!(String::from_utf8(row).unwrap().ends_with(",4"));
     }
 }

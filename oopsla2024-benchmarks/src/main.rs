@@ -1,7 +1,7 @@
 use cedar_benchmarks::CedarOptEngine;
 use cedar_benchmarks::{
     CedarEngine, Engine, ExampleApp, HierarchyStats, MultiExecutionReport, OpenFgaEngine,
-    RandomBytes, RegoEngine,
+    RandomBytes, RegoEngine, RegorusBackend, RegorusEngine,
 };
 use cedar_policy_core::ast::Request;
 use cedar_policy_core::entities::{Entities, EntityJson, TCComputation};
@@ -11,6 +11,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Parser, Debug)]
@@ -46,6 +47,10 @@ pub struct BenchArgs {
     /// values of the num-entities parameter, and generates plots accordingly.
     #[arg(long, value_delimiter = ',', default_value = "3")]
     num_entities: Vec<usize>,
+
+    /// Directory for CSVs and plots
+    #[arg(long, default_value = "output")]
+    output_dir: PathBuf,
 }
 
 /// Parameters which we don't experimentally vary
@@ -115,6 +120,14 @@ pub enum EngineChoice {
     Rego,
     /// Rego authorization engine, pre-compute transitive closure
     RegoPreTC,
+    /// Regorus interpreter with the fork's optimized policies
+    Regorus,
+    /// Regorus interpreter with precomputed entity transitive closure
+    RegorusPreTC,
+    /// Regorus compiled Rego virtual machine
+    RegorusRvm,
+    /// Regorus RVM with precomputed entity transitive closure
+    RegorusRvmPreTC,
 }
 
 impl std::fmt::Display for EngineChoice {
@@ -125,6 +138,10 @@ impl std::fmt::Display for EngineChoice {
             Self::CedarOpt => write!(f, "cedaropt"),
             Self::Rego => write!(f, "rego"),
             Self::RegoPreTC => write!(f, "rego_pre_tc"),
+            Self::Regorus => write!(f, "regorus"),
+            Self::RegorusPreTC => write!(f, "regorus_pre_tc"),
+            Self::RegorusRvm => write!(f, "regorus_rvm"),
+            Self::RegorusRvmPreTC => write!(f, "regorus_rvm_pre_tc"),
         }
     }
 }
@@ -163,10 +180,13 @@ fn run_experiment(
     };
     let mut hierarchy_stats = HierarchyStats::new();
     let mut multireports: BTreeMap<EngineChoice, MultiExecutionReport> = BTreeMap::new();
-    (1..=common_args.num_hierarchies).for_each(|_| {
+    (0..common_args.num_hierarchies).for_each(|hierarchy_index| {
         let (entities, links) = (app.bespoke_generator)(&app.validator_schema(), num_entities);
         let mut num_openfga_tuples = 0;
-        let engines = common_args.engine.iter().map(|choice| match choice {
+        let mut choices = common_args.engine.clone();
+        let offset = hierarchy_index % choices.len();
+        choices.rotate_left(offset);
+        let engines = choices.iter().map(|choice| match choice {
             EngineChoice::Cedar => {
                 let engine = CedarEngine::new(&entities, &links, &app);
                 (choice, Engine::Cedar(engine))
@@ -187,6 +207,22 @@ fn run_experiment(
             EngineChoice::RegoPreTC => {
                 let engine = RegoEngine::new(&app, &entities);
                 (choice, Engine::RegoTC(engine))
+            }
+            EngineChoice::Regorus | EngineChoice::RegorusRvm => {
+                let backend = if *choice == EngineChoice::RegorusRvm {
+                    RegorusBackend::Rvm
+                } else {
+                    RegorusBackend::Interpreter
+                };
+                (choice, Engine::Regorus(RegorusEngine::new(&app, &entities, backend)))
+            }
+            EngineChoice::RegorusPreTC | EngineChoice::RegorusRvmPreTC => {
+                let backend = if *choice == EngineChoice::RegorusRvmPreTC {
+                    RegorusBackend::Rvm
+                } else {
+                    RegorusBackend::Interpreter
+                };
+                (choice, Engine::RegorusTC(RegorusEngine::new(&app, &entities, backend)))
             }
         });
         let cedar_entities = Entities::from_entities(
@@ -212,8 +248,8 @@ fn run_experiment(
                 // request generator, we just keep calling it until we get one we want.
                 loop {
                     let request: Request = generate_request();
-                    if hierarchy.uids().iter().any(|h_uid| request.principal().uid() == Some(h_uid))
-                        && hierarchy.uids().iter().any(|h_uid| request.resource().uid() == Some(h_uid))
+                    if hierarchy.uids().any(|h_uid| request.principal().uid() == Some(h_uid))
+                        && hierarchy.uids().any(|h_uid| request.resource().uid() == Some(h_uid))
                         {
                             break request;
                         }
@@ -222,14 +258,24 @@ fn run_experiment(
             vec
         };
         // The "decision sequence" of each engine is the allow/deny sequence, which we assert needs to be the same for each engine else we're doing something wrong. (The engines should have the same allow/deny behavior.)
-        let mut decision_sequences: Vec<Vec<_>> = Vec::new();
+        let mut decision_sequences: Vec<(EngineChoice, Vec<_>)> = Vec::new();
         for (choice, engine) in engines {
             let mreport = multireports.entry(*choice).or_insert_with(MultiExecutionReport::new);
-            decision_sequences.push(Vec::with_capacity(requests.len()));
-            let decision_sequence = decision_sequences.last_mut().expect("just pushed, so there should be a last element");
-            for sreport in engine.execute(requests.clone()) {
+            decision_sequences.push((*choice, Vec::with_capacity(requests.len())));
+            let (_, decision_sequence) = decision_sequences.last_mut().expect("just pushed, so there should be a last element");
+            let reports: Vec<_> = engine.execute(requests.clone()).collect();
+            for sreport in reports {
                 decision_sequence.push(sreport.decision);
                 mreport.add(sreport);
+            }
+            if matches!(choice, EngineChoice::Rego | EngineChoice::RegoPreTC)
+                && matches!(app.name, "github-templates" | "gdrive-templates")
+            {
+                // The OPA harness warns and intentionally skips template encodings.
+                assert!(decision_sequence.is_empty());
+                decision_sequences.pop();
+            } else {
+                assert_eq!(decision_sequence.len(), requests.len(), "{choice} did not evaluate every request");
             }
         }
         let report_decision_mismatch = |request, engine_1, decision_1, engine_2, decision_2| {
@@ -237,37 +283,14 @@ fn run_experiment(
             serde_json::to_writer_pretty(std::io::stderr(), &entities).unwrap();
             panic!("Decision mismatch for {request}: {engine_1} gave {decision_1:?} but {engine_2} gave {decision_2:?}");
         };
-        match decision_sequences.len() {
-            0 => panic!("expected at least 1 decision sequence"),
-            1 => {} // nothing to do, only testing one engine
-            2 => {
-                for ((request, decision_1), decision_2) in requests.iter().zip(decision_sequences[0].iter()).zip(decision_sequences[1].iter()) {
-                    if decision_1 != decision_2 {
-                        report_decision_mismatch(request, common_args.engine[0], decision_1, common_args.engine[1], decision_2);
+        if let Some((reference_engine, reference)) = decision_sequences.first() {
+            for (choice, decisions) in decision_sequences.iter().skip(1) {
+                for ((request, expected), actual) in requests.iter().zip(reference).zip(decisions) {
+                    if expected != actual {
+                        report_decision_mismatch(request, *reference_engine, expected, *choice, actual);
                     }
                 }
             }
-            3 => {
-                for (((request, decision_1), decision_2), decision_3) in requests.iter().zip(decision_sequences[0].iter()).zip(decision_sequences[1].iter()).zip(decision_sequences[2].iter()) {
-                    if decision_1 != decision_2 {
-                        report_decision_mismatch(request, common_args.engine[0], decision_1, common_args.engine[1], decision_2);
-                    } else if decision_1 != decision_3 {
-                        report_decision_mismatch(request, common_args.engine[0], decision_1, common_args.engine[2], decision_3);
-                    }
-                }
-            }
-            4 => {
-                for ((((request, decision_1), decision_2), decision_3), decision_4) in requests.iter().zip(decision_sequences[0].iter()).zip(decision_sequences[1].iter()).zip(decision_sequences[2].iter()).zip(decision_sequences[3].iter()) {
-                    if decision_1 != decision_2 {
-                        report_decision_mismatch(request, common_args.engine[0], decision_1, common_args.engine[1], decision_2);
-                    } else if decision_1 != decision_3 {
-                        report_decision_mismatch(request, common_args.engine[0], decision_1, common_args.engine[2], decision_3);
-                    } else if decision_1 != decision_4 {
-                        report_decision_mismatch(request, common_args.engine[0], decision_1, common_args.engine[3], decision_4);
-                    }
-                }
-            }
-            _ => unimplemented!()
         }
         hierarchy_stats.add(&cedar_entities, num_openfga_tuples);
     });
@@ -279,7 +302,36 @@ fn bench(args: BenchArgs) {
     let common_args = &args.common_args;
     let num_entities = &args.num_entities;
     let unstructured_bytes = &args.unstructured_bytes[..];
-    std::fs::create_dir_all("output/").expect("failed to create output directory");
+    std::fs::create_dir_all(&args.output_dir).expect("failed to create output directory");
+    let manifest_path = args.output_dir.join("run-manifest.json");
+    assert!(
+        !manifest_path.exists(),
+        "use a fresh output directory; a run manifest already exists"
+    );
+    for app in App::value_variants() {
+        assert!(
+            !args.output_dir.join(format!("{app}.csv")).exists(),
+            "use a fresh output directory; {app}.csv already exists"
+        );
+    }
+    let mut manifest = serde_json::json!({
+        "apps": common_args.app.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "engines": common_args.engine.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "num_entities": num_entities,
+        "unstructured_bytes": unstructured_bytes,
+        "num_hierarchies": common_args.num_hierarchies,
+        "num_requests": common_args.num_requests,
+        "warmup": "one request per Cedar/Regorus instance, excluded",
+        "engine_order": "rotated by hierarchy index",
+        "quantiles": "exact empirical, linear interpolation at q*(n-1)",
+        "source_sha256": std::env::var("BENCHMARK_SOURCE_SHA256").ok(),
+        "complete": false,
+    });
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .expect("failed to write run manifest");
     for app in &common_args.app {
         let mut multireports = num_entities
             .iter()
@@ -297,13 +349,7 @@ fn bench(args: BenchArgs) {
                 })
             })
             .peekable();
-        let csv_filename = match app {
-            App::Github => "output/github.csv",
-            App::GithubTemplates => "output/github-templates.csv",
-            App::Gdrive => "output/gdrive.csv",
-            App::GdriveTemplates => "output/gdrive-templates.csv",
-            App::TinyTodo => "output/tinytodo.csv",
-        };
+        let csv_filename = args.output_dir.join(format!("{app}.csv"));
         let mut csv = File::create(csv_filename).expect("failed to create output CSV");
         write!(&mut csv, "num_entities,unstructured_bytes,").unwrap();
         for choice in common_args.engine.iter() {
@@ -331,7 +377,18 @@ fn bench(args: BenchArgs) {
             writeln!(&mut csv).unwrap();
         }
     }
+    manifest["complete"] = true.into();
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .expect("failed to complete run manifest");
     eprintln!("generating plot(s)...");
-    Command::new("python3").arg("./plot.py").status().unwrap();
+    let status = Command::new("python3")
+        .arg("./plot.py")
+        .arg(&args.output_dir)
+        .status()
+        .expect("failed to start plot.py");
+    assert!(status.success(), "plot generation failed: {status}");
     eprintln!("Done")
 }

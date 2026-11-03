@@ -16,16 +16,24 @@ pub struct Input {
     namespace: &'static str,
     #[serde(rename = "Requests")]
     requests: Vec<Request>,
+    #[serde(rename = "Principals")]
+    principals: Vec<Principal>,
 }
 
 impl Input {
-    pub fn new(requests: Vec<Request>) -> Self {
+    pub fn new(requests: Vec<Request>, es: &impl EntityGraph, closed: &Entities) -> Self {
         let policy = std::fs::read_to_string("benches/gdrive/rego/gdrive.rego").unwrap();
         let namespace = "gdrive";
+        let principals = es
+            .iter()
+            .filter(|entity| entity.uid().entity_type().to_string() == "User")
+            .map(|entity| Principal::new(entity.uid(), es, closed))
+            .collect();
         Self {
             policy,
             namespace,
             requests,
+            principals,
         }
     }
 }
@@ -83,11 +91,15 @@ fn get_view_access(e: &Entity, closed: &Entities) -> Vec<String> {
     let view_euid =
         crate::utils::pv_expect_euid(e.get("documentsAndFoldersWithViewAccess").unwrap());
 
-    let root_view = closed.entity(&view_euid).unwrap();
-    root_view
-        .ancestors()
-        .filter(is_document_or_folder)
-        .map(EntityUID::to_string)
+    closed
+        .iter()
+        .filter(|entity| is_document_or_folder(&entity.uid()))
+        .filter(|entity| {
+            entity
+                .ancestors()
+                .any(|ancestor| ancestor == view_euid.as_ref())
+        })
+        .map(|entity| entity.uid().to_string())
         .collect()
 }
 
