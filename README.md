@@ -1,36 +1,56 @@
-# Cedar Examples
+# Cedar vs. Regorus RVM
 
-This repository contains examples demonstrating the use of [Cedar](https://github.com/cedar-policy/cedar), a policy language for writing and enforcing authorization policies in your applications.  The following table summarizes relevant information about the applications. Please refer to the `README.md` files in the subfolders for details about how to build and run them.
+## Original Cedar paper
 
-| Example                               | Languages    | Description                                                                                                                                                                          |
-|---------------------------------------|--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [`tinytodo`][]                        | Rust, Python | A simple application for managing task lists that uses Cedar for authorization demonstrating the usage of the [Cedar Rust APIs][]                                                    |
-| [`tinytodo-go`][]                     | Go, Python   | A simple application for managing task lists that uses Cedar for authorization demonstrating the usage of the [Cedar Go APIs][]                                                      |                                                                                                     |
-| [`cedar-java-hello-world`][]          | Java         | A simple application demonstrating the usage of the [Cedar Java APIs][]                                                                                                              |
-| [`cedar-rust-hello-world`][]          | Rust         | A simple application demonstrating the usage of the [Cedar Rust APIs][]                                                                                                              |
-| [`cedar-wasm-example`][]              | TypeScript   | A simple application demonstrating the usage of the [Cedar Wasm APIs][]                                                                                                              |
-| [`cedar-policy-language-in-action`][] | Cedar        | Cedar policies and schemas for the [Cedar policy language in action](https://catalog.workshops.aws/cedar-policy-language-in-action) workshop                                         |
-| [`cedar-example-use-cases`][]         | Cedar        | Cedar policies and schemas for two example applications                                                                                                                              |
-| [`oopsla2024-benchmarks`][]           | Various      | Cedar policies and schemas, along with benchmarking code and scripts, used for the performance evaluation of the [OOPSLA2024 paper on Cedar](https://dl.acm.org/doi/10.1145/3649835) |
-| [`cedar-java-partial-evaluation`][]   | Java         | A simple application demonstrating partial evaluation capabilities using the [Cedar Java APIs][] |
-## Security
+The paper reports **42.8-80.8x faster median authorization for Cedar than
+OPA/Rego** across the GDrive, GitHub, and TinyTodo benchmarks.
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+![Original Cedar paper Figure 14: Cedar, OpenFGA, and Rego authorization latency](oopsla2024-benchmarks/figures/cedar-paper-figure14.png)
 
-## License
+Figure 14 from [Cutler et al., *Cedar: A New Language for Expressive, Fast, Safe,
+and Analyzable Authorization* (2024)](https://arxiv.org/pdf/2403.04651),
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Cropped from PDF page 21; figure content unchanged.
 
-This project is licensed under the Apache-2.0 License.
+## Regorus RVM vs. Cedar
 
-[Cedar Rust APIs]: https://docs.rs/cedar-policy/latest/cedar_policy
-[Cedar Go APIs]: https://github.com/cedar-policy/cedar-go
-[Cedar Java APIs]: https://github.com/cedar-policy/cedar-java
-[Cedar Wasm APIs]: https://github.com/cedar-policy/cedar/tree/main/cedar-wasm
-[`cedar-example-use-cases`]: ./cedar-example-use-cases
-[`cedar-java-hello-world`]: ./cedar-java-hello-world
-[`cedar-rust-hello-world`]: ./cedar-rust-hello-world
-[`cedar-wasm-example`]: ./cedar-wasm-example
-[`cedar-policy-language-in-action`]: ./cedar-policy-language-in-action
-[`oopsla2024-benchmarks`]: ./oopsla2024-benchmarks
-[`tinytodo`]: ./tinytodo
-[`tinytodo-go`]: ./tinytodo-go
-[`cedar-java-partial-evaluation`]: ./cedar-java-partial-evaluation
+Regorus RVM delivers **1.86-2.15x faster median authorization than Cedar**
+across our updated versions of these benchmarks.
+
+![Regorus RVM versus Cedar on GDrive, GitHub, and TinyTodo, with observed speedups of 1.86-2.15x](oopsla2024-benchmarks/output/figure14-reviewed-2026-11-03/cedar-vs-regorus-rvm/figure14_cedar_vs_rvm.png)
+
+Ratios compare average per-size medians over **5-50 entities per type**, with
+100,000 requests per point. **Setup costs are excluded.** Hardware, engine
+versions, and policy implementations differ from the paper; these results are
+not a direct RVM-versus-OPA comparison.
+
+## Reproduce
+
+Requires Rust/Cargo, a C/C++ toolchain, OpenSSL development headers, and Python 3
+with `matplotlib` and `pandas`.
+
+```shell
+git clone --branch benchmark-regorus-rvm-upstream https://github.com/anakrish/cedar-examples.git
+cd cedar-examples/oopsla2024-benchmarks
+
+git clone https://github.com/cedar-policy/cedar-spec cedar-spec
+git -C cedar-spec checkout ac201c127d31cff4bea784c87d3e3d3e8fb8bfe9
+git clone https://github.com/cedar-policy/cedar cedar-spec/cedar
+git -C cedar-spec/cedar checkout 062c8fe71016723883b3ae31298720363a1e14c8
+
+APPS=gdrive,github,tiny-todo BACKENDS=regorus-rvm \
+  NUM_HIERARCHIES=200 NUM_REQUESTS=500 \
+  NUM_ENTITIES=5,10,15,20,30,40,50 \
+  OUTPUT_ROOT=output/reproduced \
+  bash reproduce.sh
+```
+
+The run checks every Cedar/RVM decision pair and saves CSVs, plots, and source
+provenance under `output/reproduced/cedar-vs-regorus-rvm/`.
+Use an unused `OUTPUT_ROOT`; existing results are never overwritten.
+Random workloads and machine conditions mean timings will vary.
+
+For larger workloads, change `NUM_ENTITIES` to `100,200,300,400,500` and choose a
+new output directory. See [methodology and detailed reproduction notes](oopsla2024-benchmarks/README.md)
+for pinned engine versions, preprocessing, warm-up, measurement controls, and
+the presentation-only caption on the published PNG.
