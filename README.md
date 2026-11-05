@@ -24,6 +24,31 @@ Ratios compare average per-size medians over **5-50 entities per type**, with
 versions, and policy implementations differ from the paper; these results are
 not a direct RVM-versus-OPA comparison.
 
+## Larger workloads: 100-500 entities per type
+
+Regorus RVM delivers **1.35-1.97x faster median authorization than Cedar**
+across the larger workloads.
+
+![Regorus RVM versus Cedar on GDrive, GitHub, and TinyTodo with 100-500 entities per type](oopsla2024-benchmarks/output/figure14-large-2026-11-03/cedar-vs-regorus-rvm/figure14_cedar_vs_rvm_large_captioned.png)
+
+| Application | Cedar average median (us) | RVM average median (us) | Speedup |
+|---|---:|---:|---:|
+| GDrive | 6.5120 | 3.3038 | 1.97x |
+| GitHub | 9.8544 | 5.9774 | 1.65x |
+| TinyTodo | 4.1434 | 3.0640 | 1.35x |
+
+Speedup is the ratio of arithmetic averages of per-size medians, not the
+largest per-size or p99 gap. All **1.5 million paired decisions matched**, with
+zero evaluation errors. Setup costs are excluded. See the
+[raw results and source provenance](oopsla2024-benchmarks/output/figure14-large-2026-11-03/cedar-vs-regorus-rvm).
+
+Both runs update engine versions, correct GDrive permission-generation and
+translation defects, and optimize Rego policies to prepare reusable permissions
+and graph closures before timed evaluation. The harness uses symmetric warm-up,
+rotating engine order, and exact empirical quantiles. The paper's main Rego
+comparison computes graph reachability during authorization; our results are
+an adapted, optimized steady-state comparison, not an exact reproduction.
+
 ## Reproduce
 
 Requires Rust/Cargo, a C/C++ toolchain, OpenSSL development headers, and Python 3

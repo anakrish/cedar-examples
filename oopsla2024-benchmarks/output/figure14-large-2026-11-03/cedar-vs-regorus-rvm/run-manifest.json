@@ -1,0 +1,28 @@
+{
+  "apps": [
+    "github",
+    "tinytodo",
+    "gdrive"
+  ],
+  "engines": [
+    "cedar",
+    "regorus_rvm"
+  ],
+  "num_entities": [
+    100,
+    200,
+    300,
+    400,
+    500
+  ],
+  "unstructured_bytes": [
+    8192
+  ],
+  "num_hierarchies": 200,
+  "num_requests": 500,
+  "warmup": "one request per Cedar/Regorus instance, excluded",
+  "engine_order": "rotated by hierarchy index",
+  "quantiles": "exact empirical, linear interpolation at q*(n-1)",
+  "source_sha256": "fda75e45758db05cedb4755c7e69a8e680e1b9ebb2c70d2977aeb3c74620285c",
+  "complete": true
+}
