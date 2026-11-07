@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/open-policy-agent/opa/rego"
 	"os"
 	"time"
 )
 
 func main() {
-	benchmarkCase := flag.String("case", "original", "original or input-excluded")
+	benchmarkCase := flag.String("case", "original", "original, input-excluded or closure-prepared")
 	flag.Parse()
-	if *benchmarkCase != "original" && *benchmarkCase != "input-excluded" {
+	if *benchmarkCase != "original" && *benchmarkCase != "input-excluded" && *benchmarkCase != "closure-prepared" {
 		panic("unsupported benchmark case: " + *benchmarkCase)
 	}
 	inputs := tinytodo.ReadInput()
@@ -23,8 +24,14 @@ func main() {
 func runExpirement(input tinytodo.Input, benchmarkCase string) []tinytodo.TestData {
 	outputs := make([]tinytodo.TestData, len(input.Requests), len(input.Requests))
 	start := time.Now()
-	policyObj := tinytodo.ReadPolicy(input.Policy, input.Namespace)
-	compilation := time.Since(start)
+	var policyObj rego.PreparedEvalQuery
+	var compilation, preprocessing time.Duration
+	if benchmarkCase == "closure-prepared" {
+		policyObj, preprocessing, compilation = tinytodo.PreparePolicy(input)
+	} else {
+		policyObj = tinytodo.ReadPolicy(input.Policy, input.Namespace)
+		compilation = time.Since(start)
+	}
 
 	var conversion *int64
 	if benchmarkCase == "original" {
@@ -45,6 +52,7 @@ func runExpirement(input tinytodo.Input, benchmarkCase string) []tinytodo.TestDa
 		"app": input.Namespace, "case": benchmarkCase,
 		"requests": len(input.Requests), "compilation_ns": compilation.Nanoseconds(),
 		"input_conversion_ns": conversion,
+		"preprocessing_ns":    preprocessing.Nanoseconds(),
 	})
 	if err != nil {
 		panic(err)

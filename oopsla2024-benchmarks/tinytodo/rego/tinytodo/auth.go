@@ -7,6 +7,7 @@ import "fmt"
 
 import "github.com/open-policy-agent/opa/rego"
 import "github.com/open-policy-agent/opa/ast"
+import "github.com/open-policy-agent/opa/storage/inmem"
 
 type Module = func(r *rego.Rego)
 
@@ -85,4 +86,52 @@ func ReadPolicy(src string, namespace string) rego.PreparedEvalQuery {
 		panic(err)
 	}
 	return query
+}
+
+func PreparePolicy(input Input) (rego.PreparedEvalQuery, time.Duration, time.Duration) {
+	if len(input.Requests) == 0 {
+		panic("missing request batch for OPA preprocessing")
+	}
+	first, ok := input.Requests[0].(map[string]interface{})
+	if !ok {
+		panic("expected object request for OPA preprocessing")
+	}
+	preparation := first
+	if input.Namespace == "gdrive" {
+		if input.Principals == nil {
+			panic("missing full principal population for GDrive preprocessing")
+		}
+		preparation = map[string]interface{}{"files": first["files"], "principals": input.Principals}
+	}
+	ctx := context.Background()
+	start := time.Now()
+	query, err := rego.New(
+		rego.Query(fmt.Sprintf("x = data.%s.preprocess", input.Namespace)),
+		rego.Module(input.Namespace+".rego", input.Policy),
+	).PrepareForEval(ctx)
+	if err != nil {
+		panic(fmt.Errorf("OPA preprocessing query compilation failed: %w", err))
+	}
+	results, err := query.Eval(ctx, rego.EvalInput(preparation))
+	if err != nil {
+		panic(fmt.Errorf("OPA preprocessing failed: %w", err))
+	}
+	if len(results) != 1 {
+		panic("OPA preprocessing must return exactly one result")
+	}
+	data, ok := results[0].Bindings["x"].(map[string]interface{})
+	if !ok {
+		panic("OPA preprocessing must return an object")
+	}
+	preprocessing := time.Since(start)
+	start = time.Now()
+	prepared, err := rego.New(
+		rego.Query(fmt.Sprintf("x = data.%s.allow", input.Namespace)),
+		rego.Module(input.Namespace+".rego", input.Policy),
+		rego.Store(inmem.NewFromObject(data)),
+	).PrepareForEval(ctx)
+	if err != nil {
+		panic(fmt.Errorf("OPA prepared authorization query compilation failed: %w", err))
+	}
+	return prepared, preprocessing, time.Since(start)
 }

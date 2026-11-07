@@ -34,6 +34,7 @@ pub enum Engine<'a> {
     Rego(RegoEngine<'a, OpenEntities>),
     RegoTC(RegoEngine<'a, Entities>),
     RegoInputExcluded(RegoEngine<'a, OpenEntities>),
+    RegoClosurePrepared(RegoEngine<'a, OpenEntities>),
 }
 
 impl<'a> Engine<'a> {
@@ -48,6 +49,7 @@ impl<'a> Engine<'a> {
             Self::Rego(e) => Box::new(e.execute(requests)),
             Self::RegoTC(e) => Box::new(e.execute(requests)),
             Self::RegoInputExcluded(e) => Box::new(e.execute(requests)),
+            Self::RegoClosurePrepared(e) => Box::new(e.execute(requests)),
             Self::CedarOpt(e) => {
                 let slicer = e.get_slicer();
                 Box::new(

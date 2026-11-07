@@ -137,6 +137,8 @@ pub enum EngineChoice {
     RegoPreTC,
     /// Original Rego policies with native input conversion outside timing.
     RegoInputExcluded,
+    /// Closure-prepared Rego policies with native inputs outside timing.
+    RegoClosurePrepared,
 }
 
 impl std::fmt::Display for EngineChoice {
@@ -148,6 +150,7 @@ impl std::fmt::Display for EngineChoice {
             Self::Rego => write!(f, "rego"),
             Self::RegoPreTC => write!(f, "rego_pre_tc"),
             Self::RegoInputExcluded => write!(f, "rego_input_excluded"),
+            Self::RegoClosurePrepared => write!(f, "rego_closure_prepared"),
         }
     }
 }
@@ -285,6 +288,10 @@ fn run_experiment(
             EngineChoice::RegoInputExcluded => {
                 let engine = RegoEngine::new(&app, &entities).with_case(RegoCase::InputExcluded);
                 (choice, Engine::RegoInputExcluded(engine))
+            }
+            EngineChoice::RegoClosurePrepared => {
+                let engine = RegoEngine::new(&app, &entities).with_case(RegoCase::ClosurePrepared);
+                (choice, Engine::RegoClosurePrepared(engine))
             }
         });
         let cedar_entities = Entities::from_entities(

@@ -25,6 +25,7 @@ static GO_BINARY_PATH: &str = "tinytodo/rego/build/bin/tinytodo";
 pub enum RegoCase {
     Original,
     InputExcluded,
+    ClosurePrepared,
 }
 
 impl RegoCase {
@@ -32,6 +33,7 @@ impl RegoCase {
         match self {
             Self::Original => "original",
             Self::InputExcluded => "input-excluded",
+            Self::ClosurePrepared => "closure-prepared",
         }
     }
 }
@@ -65,7 +67,7 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
     }
 
     pub fn execute(&self, requests: Vec<Request>) -> impl Iterator<Item = SingleExecutionReport> {
-        let payload = match self.app.name {
+        let mut payload = match self.app.name {
             "tinytodo" => {
                 let requests: Vec<_> = requests
                     .into_iter()
@@ -95,7 +97,18 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
                     .iter()
                     .map(|r| gdrive::Request::new(r, &self.entities, &closed))
                     .collect();
-                let json_payload = serde_json::to_value(gdrive::Input::new(requests)).unwrap();
+                let mut json_payload = serde_json::to_value(gdrive::Input::new(requests)).unwrap();
+                if matches!(self.case, RegoCase::ClosurePrepared) {
+                    let principals: Vec<_> = self
+                        .entities
+                        .iter()
+                        .filter(|entity| entity.uid().entity_type().to_string() == "User")
+                        .map(|entity| {
+                            gdrive::Principal::new(&entity.uid(), &self.entities, &closed)
+                        })
+                        .collect();
+                    json_payload["Principals"] = serde_json::to_value(principals).unwrap();
+                }
                 json_payload
             }
             appname => {
@@ -103,6 +116,15 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
                 serde_json::json!([])
             }
         };
+        if matches!(self.case, RegoCase::ClosurePrepared) {
+            let policy = match self.app.name {
+                "github" => include_str!("../prepared-policies/github.rego"),
+                "gdrive" => include_str!("../prepared-policies/gdrive.rego"),
+                "tinytodo" => include_str!("../prepared-policies/tinytodo.rego"),
+                other => panic!("unsupported prepared OPA namespace: {other}"),
+            };
+            payload["Policy"] = Value::String(policy.to_owned());
+        }
         run_opa_requests(&payload, self.case)
     }
 }
