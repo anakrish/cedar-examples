@@ -13,6 +13,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Instant;
 
 mod corpus;
 
@@ -265,7 +266,13 @@ fn run_experiment(
         let mut num_openfga_tuples = 0;
         let engines = common_args.engine.iter().map(|choice| match choice {
             EngineChoice::Cedar => {
+                let start = Instant::now();
                 let engine = CedarEngine::new(&entities, &links, &app);
+                if common_args.raw_samples {
+                    eprintln!("cedar_setup {}", serde_json::json!({
+                        "app": app_name, "native_data_policy_ns": start.elapsed().as_nanos(),
+                    }));
+                }
                 (choice, Engine::Cedar(engine))
             },
             EngineChoice::CedarOpt => {

@@ -1,29 +1,156 @@
-# Cedar Examples
+# OOPSLA 2024 Cedar/OPA timing reproduction
 
-This repository contains examples demonstrating the use of [Cedar](https://github.com/cedar-policy/cedar), a policy language for writing and enforcing authorization policies in your applications.  The following table summarizes relevant information about the applications. Please refer to the `README.md` files in the subfolders for details about how to build and run them.
+This branch tests how native-input conversion and reusable graph preprocessing
+affect the Cedar/OPA comparison in the original OOPSLA 2024 artifact. It is an
+independent reproduction, not an author-endorsed correction or a claim about all
+Cedar/Rego workloads.
 
-| Example      | Languages | Description |
-| ----------- | ----------- | ---------- |
-| [`tinytodo`][] | Rust, Python | A simple application for managing task lists that uses Cedar for authorization |
-| [`cedar-java-hello-world`][] | Java | A simple application demonstrating the usage of the [Cedar Java APIs][] |
-| [`cedar-rust-hello-world`][] | Rust | A simple application demonstrating the usage of the [Cedar Rust APIs][] |
-| [`cedar-policy-language-in-action`][] | Cedar | Cedar policies and schemas for the [Cedar policy language in action](https://catalog.workshops.aws/cedar-policy-language-in-action) workshop |
-| [`cedar-example-use-cases`][] |  Cedar  | Cedar policies and schemas for two example applications |
-| [`oopsla2024-benchmarks`][] | Various | Cedar policies and schemas, along with benchmarking code and scripts, used for the performance evaluation of the OOPSLA2024 paper on Cedar |
+The starting point is upstream
+[`979b9a8`](https://github.com/cedar-policy/cedar-examples/tree/979b9a8ef0d99947f868a5080c4c20a1055a3b51/oopsla2024-benchmarks).
+The [original benchmark README](oopsla2024-benchmarks/README.md), generators,
+original policies and historical request translations are retained. Cedar and
+its generators are pinned to **3.0.1 / `f739ac2`**; OPA is pinned to **0.61.0**.
+Dependency locks are reconstructed and committed, not claimed to be the authors'
+original lockfiles.
 
-## Security
+## Reproduce from one checkout
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
+Docker is the only host dependency besides Git. The container pins Rust 1.97.1
+and Go 1.26.5; these are **not** the paper's original toolchains. Commands build
+the image, obtain the frozen corpus, verify its checksums, replay requests and
+produce validated tables, plots and raw measurements.
+Base images are digest-pinned. Debian packages installed during image construction
+are not snapshot-pinned; Python/library versions and binary hashes are recorded.
+
+```bash
+git clone --branch oopsla2024-timing-reproduction \
+  https://github.com/anakrish/cedar-examples.git cedar-timing-reproduction
+cd cedar-timing-reproduction
+
+# Quick correctness/integration check; not publication-grade measurements.
+./reproduce.sh --smoke
+
+# All applications and comparison cases; three repeated measurements.
+./reproduce.sh --full
+
+# Select an application without changing its saved workloads.
+./reproduce.sh --full --app github
+
+# Reproduce an individual case, always with Cedar as a paired control.
+./reproduce.sh --full --app github --case original
+./reproduce.sh --full --app github --case input-excluded
+./reproduce.sh --full --app github --case closure-prepared
+```
+
+For immutable code and corpus provenance, check out the
+`oopsla2024-timing-reproduction-v1` release tag instead of the moving branch.
+All cases are available at that tag; checking out intermediate commits is only
+necessary to inspect how the experiments were introduced.
+
+## Comparisons and timing boundaries
+
+| Case | Original Rego policies? | Authorization timer | Outside authorization timer |
+| --- | --- | --- | --- |
+| `original` | Yes | OPA `EvalInput` + query evaluation | Query compilation |
+| `input-excluded` | Yes | OPA `EvalParsedInput` + query evaluation | Query compilation and native AST input conversion |
+| `closure-prepared` | No: separate equivalent prepared policies | OPA `EvalParsedInput` + prepared-policy evaluation | Native conversion, graph preprocessing and compilation |
+| Cedar control | Original Cedar policies | Original `is_authorized()` call | Native requests, entities, transitive closure and policies |
+
+All OPA cases retain the full graph fields. GDrive preprocessing uses the full
+datastore principal population, not principals sampled from authorization
+requests. Preprocessing happens once per datastore and never inside the
+authorization timer. Its cost, query compilation, batch input conversion and
+Cedar engine construction are reported in `setup.csv`.
+
+Those setup measurements are **not a complete end-to-end cost accounting**:
+generation, Rust-side payload packing, JSON serialization/decoding and IPC are
+outside these authorization timers and are not all separately instrumented.
+Original OPA conversion is part of evaluation timing, so its separately measured
+conversion column is unavailable, not zero.
+
+Default `--timing precise` retains fractional-microsecond samples and uses exact
+interpolated empirical quantiles. Engine order rotates across repetitions;
+there is no explicit warmup. The paper-style aggregate is the arithmetic mean
+of per-size OPA medians divided by the arithmetic mean of per-size Cedar medians,
+not the mean of per-size ratios.
+
+To retain original integer-microsecond truncation, approximate quantiles and
+fixed engine order:
+
+```bash
+./reproduce.sh --full --timing historical
+```
+
+Historical timing boundaries and aggregation are preserved, but corpus replay,
+raw-sample recording, current hardware and reconstructed builds mean this is
+not a bit-for-bit reproduction of the authors' execution environment.
+
+## Workloads and frozen corpora
+
+Full runs use the original seven sizes **5, 10, 15, 20, 30, 40, 50 entities per
+type**, with **200 datastores x 500 requests** per size/application. There is no
+size-selection option in the runner. Smoke runs retain the sizes but use
+2 datastores x 10 requests.
+
+`paper-v1` and `smoke-v1` are frozen corpora distributed as release assets, with
+archive and manifest hashes in [corpora.json](reproduction/corpora.json). They
+are new samples from the original generators, **not the authors' original
+random inputs**. Every case replays the same saved schema-generation bytes,
+entities, template links and complete requests, including contexts.
+Application selection filters this corpus; it does not regenerate inputs.
+
+To generate an independent corpus, give it a new name explicitly:
+
+```bash
+./reproduce.sh --full --generate-corpus --corpus independent-paper-1
+```
+
+Generation always includes all three applications so later subset selections
+remain comparable. Existing corpora are verified and reused, never overwritten.
+Different corpus names represent different randomly generated workloads.
+
+## Outputs and interpretation
+
+Each invocation creates a fresh directory under `reproduction/results/`:
+
+- `summary.csv`: average medians, OPA/Cedar ratios and observed min/max ratios
+  across repeated runs. These ranges are not confidence intervals.
+- `per-repetition.csv`, per-application/per-size CSVs and comparison PNG/PDFs.
+- Compressed per-request samples with datastore/request identifiers and actual
+  nanosecond timings, plus `setup.csv` and execution logs.
+- `manifest.json`: exact commands in the logs, source revision/hashes, corpus
+  hash, binaries, toolchains, CPU information, configuration and validated counts.
+
+A run is marked complete only after all expected requests are present, every
+engine agrees with Cedar, no authorization errors occur, setup records are
+present and precise medians match raw samples. Failures retain incomplete
+manifests and logs. Full all-case runs validate 2.1 million shared requests per
+repetition, with four engine decisions per request.
+
+The container is limited to 4 CPUs and 8 GiB; it does not isolate the physical
+host. Run on an otherwise idle machine and compare repeated runs. Exact timings
+will vary by hardware and scheduling. The larger 100-500 scaling experiments,
+updated workload fixes and RVM comparisons are deliberately outside this initial
+correction-focused branch.
+
+## Native execution and tests
+
+For development, with compatible Rust/Go, Python, matplotlib and pandas already
+installed, put `--native` first:
+
+```bash
+./reproduce.sh --native --smoke
+cd oopsla2024-benchmarks
+cargo test --locked -j 4
+cargo fmt --check
+(cd tinytodo/rego && go test ./... && go vet ./...)
+cd ..
+python3 -m unittest discover -s reproduction
+```
+
+The original upstream Dockerfile remains unchanged; use the root runner and
+`reproduction/Dockerfile` for the pinned Cedar/OPA-only environment.
 
 ## License
 
 This project is licensed under the Apache-2.0 License.
-
-[Cedar Rust APIs]: https://github.com/cedar-policy/cedar/tree/main/cedar-policy
-[Cedar Java APIs]: https://github.com/cedar-policy/cedar-java
-[`cedar-example-use-cases`]: ./cedar-example-use-cases
-[`cedar-java-hello-world`]: ./cedar-java-hello-world
-[`cedar-rust-hello-world`]: ./cedar-rust-hello-world
-[`cedar-policy-language-in-action`]: ./cedar-policy-language-in-action
-[`oopsla2024-benchmarks`]: ./oopsla2024-benchmarks
-[`tinytodo`]: ./tinytodo
