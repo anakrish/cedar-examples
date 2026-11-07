@@ -2,24 +2,53 @@ package main
 
 import (
 	"TinyTodoRego/tinytodo"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"time"
 )
 
-
 func main() {
-    inputs := tinytodo.ReadInput()
-    outputs := runExpirement(inputs)
-    tinytodo.WriteOutput(outputs)
+	benchmarkCase := flag.String("case", "original", "original or input-excluded")
+	flag.Parse()
+	if *benchmarkCase != "original" && *benchmarkCase != "input-excluded" {
+		panic("unsupported benchmark case: " + *benchmarkCase)
+	}
+	inputs := tinytodo.ReadInput()
+	outputs := runExpirement(inputs, *benchmarkCase)
+	tinytodo.WriteOutput(outputs)
 }
 
-func runExpirement(input tinytodo.Input) []tinytodo.TestData {
-    outputs := make([]tinytodo.TestData, len(input.Requests), len(input.Requests))
-    policyObj := tinytodo.ReadPolicy(input.Policy, input.Namespace)
+func runExpirement(input tinytodo.Input, benchmarkCase string) []tinytodo.TestData {
+	outputs := make([]tinytodo.TestData, len(input.Requests), len(input.Requests))
+	start := time.Now()
+	policyObj := tinytodo.ReadPolicy(input.Policy, input.Namespace)
+	compilation := time.Since(start)
 
-    for i, request := range input.Requests {
-        casted := request.(map[string]interface{})
-        output := tinytodo.IsAuthorized(casted, policyObj)
-        outputs[i] = output
-    }
-
-    return outputs
+	var conversion *int64
+	if benchmarkCase == "original" {
+		for i, request := range input.Requests {
+			casted := request.(map[string]interface{})
+			outputs[i] = tinytodo.IsAuthorized(casted, policyObj)
+		}
+	} else {
+		start = time.Now()
+		parsed := tinytodo.ParseRequests(input.Requests)
+		nanoseconds := time.Since(start).Nanoseconds()
+		conversion = &nanoseconds
+		for i, request := range parsed {
+			outputs[i] = tinytodo.IsAuthorizedParsed(request, policyObj)
+		}
+	}
+	setup, err := json.Marshal(map[string]interface{}{
+		"app": input.Namespace, "case": benchmarkCase,
+		"requests": len(input.Requests), "compilation_ns": compilation.Nanoseconds(),
+		"input_conversion_ns": conversion,
+	})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Fprintf(os.Stderr, "opa_setup %s\n", setup)
+	return outputs
 }

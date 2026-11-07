@@ -24,7 +24,7 @@ mod openfga_engine;
 pub use openfga_engine::OpenFgaEngine;
 mod rego_engine;
 mod rego_requests;
-pub use rego_engine::RegoEngine;
+pub use rego_engine::{RegoCase, RegoEngine};
 mod slicing;
 
 pub enum Engine<'a> {
@@ -33,6 +33,7 @@ pub enum Engine<'a> {
     OpenFga(OpenFgaEngine<'a>),
     Rego(RegoEngine<'a, OpenEntities>),
     RegoTC(RegoEngine<'a, Entities>),
+    RegoInputExcluded(RegoEngine<'a, OpenEntities>),
 }
 
 impl<'a> Engine<'a> {
@@ -46,6 +47,7 @@ impl<'a> Engine<'a> {
             Self::OpenFga(e) => Box::new(requests.into_iter().map(|req| e.execute(req))),
             Self::Rego(e) => Box::new(e.execute(requests)),
             Self::RegoTC(e) => Box::new(e.execute(requests)),
+            Self::RegoInputExcluded(e) => Box::new(e.execute(requests)),
             Self::CedarOpt(e) => {
                 let slicer = e.get_slicer();
                 Box::new(

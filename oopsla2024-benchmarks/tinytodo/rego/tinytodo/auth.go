@@ -6,54 +6,83 @@ import "time"
 import "fmt"
 
 import "github.com/open-policy-agent/opa/rego"
+import "github.com/open-policy-agent/opa/ast"
 
 type Module = func(r *rego.Rego)
 
+func IsAuthorized(input map[string]interface{}, query rego.PreparedEvalQuery) TestData {
+	ctx := context.Background()
 
-func IsAuthorized(input map[string]interface{}, query rego.PreparedEvalQuery) TestData  {
-    ctx := context.Background()
+	start := time.Now()
+	evalled := rego.EvalInput(input)
+	results, err := query.Eval(ctx, evalled)
+	duration := time.Since(start)
 
-    start := time.Now()
-    evalled := rego.EvalInput(input)
-    results, err := query.Eval(ctx, evalled)
-    duration := time.Since(start)
-
-    if err != nil {
-        // Handle evaluation error.
-        log.Print("Error evaluating policies")
-        panic(err)
-    } 
-
-    var authResult bool
-
-    if len(results) == 0 {
-        authResult = false
-    } else if was_allowed, ok := results[0].Bindings["x"].(bool); !ok {
-        // Handle unexpected result type.
-        panic("Unexpected type for `allow`\n")
-    } else if was_allowed {
-        authResult = true
-    } else { 
-        authResult = false
-    }
-
-    return TestData { Decision : authResult, Dur : duration }
+	return evaluationResult(results, err, duration)
 }
 
-func ReadPolicy(src string, namespace string) rego.PreparedEvalQuery { 
-    ctx := context.Background()
+func IsAuthorizedParsed(input ast.Value, query rego.PreparedEvalQuery) TestData {
+	ctx := context.Background()
+	start := time.Now()
+	evalled := rego.EvalParsedInput(input)
+	results, err := query.Eval(ctx, evalled)
+	duration := time.Since(start)
+	return evaluationResult(results, err, duration)
+}
 
-    filename := fmt.Sprintf("%s.rego", namespace)
-    query_string := fmt.Sprintf("x = data.%s.allow", namespace)
+func ParseRequests(requests []interface{}) []ast.Value {
+	parsed := make([]ast.Value, len(requests))
+	for i, request := range requests {
+		object, ok := request.(map[string]interface{})
+		if !ok {
+			panic("expected object authorization request")
+		}
+		native, err := ast.InterfaceToValue(object)
+		if err != nil {
+			panic(fmt.Errorf("OPA input conversion failed: %w", err))
+		}
+		parsed[i] = native
+	}
+	return parsed
+}
 
-    module := rego.Module(filename, src)
-    query, err := rego.New(
-        rego.Query(query_string),
-        module,
-    ).PrepareForEval(ctx)
-    if err != nil { 
-        log.Print("Error constructing query")
-        panic(err)
-    }
-    return query
+func evaluationResult(results rego.ResultSet, err error, duration time.Duration) TestData {
+	if err != nil {
+		// Handle evaluation error.
+		log.Print("Error evaluating policies")
+		panic(err)
+	}
+
+	var authResult bool
+
+	if len(results) == 0 {
+		authResult = false
+	} else if was_allowed, ok := results[0].Bindings["x"].(bool); !ok {
+		// Handle unexpected result type.
+		panic("Unexpected type for `allow`\n")
+	} else if was_allowed {
+		authResult = true
+	} else {
+		authResult = false
+	}
+
+	return TestData{Decision: authResult, Dur: duration}
+}
+
+func ReadPolicy(src string, namespace string) rego.PreparedEvalQuery {
+	ctx := context.Background()
+
+	filename := fmt.Sprintf("%s.rego", namespace)
+	query_string := fmt.Sprintf("x = data.%s.allow", namespace)
+
+	module := rego.Module(filename, src)
+	query, err := rego.New(
+		rego.Query(query_string),
+		module,
+	).PrepareForEval(ctx)
+	if err != nil {
+		log.Print("Error constructing query")
+		panic(err)
+	}
+	return query
 }

@@ -1,7 +1,7 @@
 use cedar_benchmarks::CedarOptEngine;
 use cedar_benchmarks::{
     CedarEngine, Engine, ExampleApp, HierarchyStats, MultiExecutionReport, OpenFgaEngine,
-    RandomBytes, RegoEngine,
+    RandomBytes, RegoCase, RegoEngine,
 };
 use cedar_policy_core::ast::Request;
 use cedar_policy_core::entities::{Entities, EntityJson, TCComputation};
@@ -135,6 +135,8 @@ pub enum EngineChoice {
     Rego,
     /// Rego authorization engine, pre-compute transitive closure
     RegoPreTC,
+    /// Original Rego policies with native input conversion outside timing.
+    RegoInputExcluded,
 }
 
 impl std::fmt::Display for EngineChoice {
@@ -145,6 +147,7 @@ impl std::fmt::Display for EngineChoice {
             Self::CedarOpt => write!(f, "cedaropt"),
             Self::Rego => write!(f, "rego"),
             Self::RegoPreTC => write!(f, "rego_pre_tc"),
+            Self::RegoInputExcluded => write!(f, "rego_input_excluded"),
         }
     }
 }
@@ -278,6 +281,10 @@ fn run_experiment(
             EngineChoice::RegoPreTC => {
                 let engine = RegoEngine::new(&app, &entities);
                 (choice, Engine::RegoTC(engine))
+            }
+            EngineChoice::RegoInputExcluded => {
+                let engine = RegoEngine::new(&app, &entities).with_case(RegoCase::InputExcluded);
+                (choice, Engine::RegoInputExcluded(engine))
             }
         });
         let cedar_entities = Entities::from_entities(
