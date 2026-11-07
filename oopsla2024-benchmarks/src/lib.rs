@@ -90,6 +90,7 @@ pub struct MultiExecutionReport {
     err: Option<AuthorizationError>,
     /// Mean number of attributes of `context`
     mean_context_attrs: Mean,
+    precise_samples: Option<Vec<f64>>,
 }
 
 impl MultiExecutionReport {
@@ -105,19 +106,29 @@ impl MultiExecutionReport {
             mean_num_errors: Mean::new(),
             err: None,
             mean_context_attrs: Mean::new(),
+            precise_samples: None,
         }
+    }
+
+    pub fn new_precise() -> Self {
+        let mut report = Self::new();
+        report.precise_samples = Some(Vec::new());
+        report
     }
 
     /// Add a data point to the report
     pub fn add(&mut self, single_report: SingleExecutionReport) {
-        self.mean_dur_micros
-            .add(f64::try_from(u32::try_from(single_report.dur.as_micros()).unwrap()).unwrap());
-        self.median_dur_micros
-            .add(f64::try_from(u32::try_from(single_report.dur.as_micros()).unwrap()).unwrap());
-        self.p90_dur_micros
-            .add(f64::try_from(u32::try_from(single_report.dur.as_micros()).unwrap()).unwrap());
-        self.p99_dur_micros
-            .add(f64::try_from(u32::try_from(single_report.dur.as_micros()).unwrap()).unwrap());
+        let micros = if let Some(samples) = &mut self.precise_samples {
+            let micros = single_report.dur.as_secs_f64() * 1_000_000.0;
+            samples.push(micros);
+            micros
+        } else {
+            f64::try_from(u32::try_from(single_report.dur.as_micros()).unwrap()).unwrap()
+        };
+        self.mean_dur_micros.add(micros);
+        self.median_dur_micros.add(micros);
+        self.p90_dur_micros.add(micros);
+        self.p99_dur_micros.add(micros);
         match single_report.decision {
             Decision::Allow => {
                 self.allows.add(1.0);
@@ -146,10 +157,18 @@ impl MultiExecutionReport {
         writeln!(
             f,
             "median duration: {:.3} µs",
-            self.median_dur_micros.quantile()
+            self.duration_quantile(0.50, &self.median_dur_micros)
         )?;
-        writeln!(f, "p90 duration: {:.3} µs", self.p90_dur_micros.quantile())?;
-        writeln!(f, "p99 duration: {:.3} µs", self.p99_dur_micros.quantile())?;
+        writeln!(
+            f,
+            "p90 duration: {:.3} µs",
+            self.duration_quantile(0.90, &self.p90_dur_micros)
+        )?;
+        writeln!(
+            f,
+            "p99 duration: {:.3} µs",
+            self.duration_quantile(0.99, &self.p99_dur_micros)
+        )?;
         writeln!(
             f,
             "{:.1}% allows and {:.1}% denies",
@@ -188,15 +207,54 @@ impl MultiExecutionReport {
             f,
             "{},{},{},{},{},{},{},{}",
             self.mean_dur_micros.mean(),
-            self.median_dur_micros.quantile(),
-            self.p90_dur_micros.quantile(),
-            self.p99_dur_micros.quantile(),
+            self.duration_quantile(0.50, &self.median_dur_micros),
+            self.duration_quantile(0.90, &self.p90_dur_micros),
+            self.duration_quantile(0.99, &self.p99_dur_micros),
             self.allows.mean(),
             self.denies.mean(),
             self.mean_num_errors.mean(),
             self.mean_context_attrs.mean(),
         )?;
         Ok(())
+    }
+
+    fn duration_quantile(&self, probability: f64, historical: &Quantile) -> f64 {
+        let Some(samples) = &self.precise_samples else {
+            return historical.quantile();
+        };
+        assert!(
+            !samples.is_empty(),
+            "cannot summarize an empty request batch"
+        );
+        let mut sorted = samples.clone();
+        sorted.sort_unstable_by(f64::total_cmp);
+        let position = probability * (sorted.len() - 1) as f64;
+        let lower = position.floor() as usize;
+        let upper = position.ceil() as usize;
+        sorted[lower] + (sorted[upper] - sorted[lower]) * position.fract()
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    #[test]
+    fn precise_timing_retains_submicrosecond_samples_and_interpolates_median() {
+        let mut precise = MultiExecutionReport::new_precise();
+        let mut historical = MultiExecutionReport::new();
+        for nanos in [100, 300, 500, 900] {
+            for report in [&mut precise, &mut historical] {
+                report.add(SingleExecutionReport {
+                    dur: Duration::from_nanos(nanos),
+                    decision: Decision::Allow,
+                    errors: Vec::new(),
+                    context_attrs: 0,
+                });
+            }
+        }
+        assert!((precise.duration_quantile(0.5, &precise.median_dur_micros) - 0.4).abs() < 1e-12);
+        assert_eq!(historical.mean_dur_micros.mean(), 0.0);
     }
 }
 

@@ -23,3 +23,10 @@ cedar-rust-hello-world/target/*
 # Don't check build files for tinytodo
 tinytodo/Cargo.lock
 tinytodo/target/*
+
+oopsla2024-benchmarks/target/
+oopsla2024-benchmarks/output/
+oopsla2024-benchmarks/tinytodo/rego/build/
+reproduction/corpora/
+reproduction/results/
+__pycache__/

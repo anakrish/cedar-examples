@@ -10,8 +10,11 @@ use cedar_policy_validator::CoreSchema;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::process::Command;
+
+mod corpus;
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -75,6 +78,23 @@ pub struct CommonBenchArgs {
     /// Each experiment will generate this many hierarchies, and `num-requests` requests per hierarchy.
     #[arg(short = 'n', long, default_value_t = 100)]
     num_hierarchies: usize,
+
+    #[arg(long, conflicts_with = "replay_corpus")]
+    record_corpus: Option<PathBuf>,
+
+    #[arg(long)]
+    replay_corpus: Option<PathBuf>,
+
+    /// Fractional-microsecond samples and exact interpolated quantiles.
+    #[arg(long)]
+    precise_timing: bool,
+
+    /// Save per-request durations and fail on authorization errors.
+    #[arg(long)]
+    raw_samples: bool,
+
+    #[arg(long, default_value = "output")]
+    output: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum, Hash)]
@@ -150,21 +170,92 @@ fn run_experiment(
     bytes: &mut RandomBytes,
 ) -> (HierarchyStats, BTreeMap<EngineChoice, MultiExecutionReport>) {
     eprintln!("Running experiment for {app} with {unstructured_bytes} unstructured bytes and {num_entities} entities per entity type...");
-    let app = match app {
-        App::Github => ExampleApp::github(&mut bytes.unstructured(unstructured_bytes)),
-        App::GithubTemplates => {
-            ExampleApp::github_templates(&mut bytes.unstructured(unstructured_bytes))
-        }
-        App::Gdrive => ExampleApp::gdrive(&mut bytes.unstructured(unstructured_bytes)),
-        App::GdriveTemplates => {
-            ExampleApp::gdrive_templates(&mut bytes.unstructured(unstructured_bytes))
-        }
-        App::TinyTodo => ExampleApp::tinytodo(&mut bytes.unstructured(unstructured_bytes)),
+    let app_name = app.to_string();
+    let corpus_directory = common_args
+        .record_corpus
+        .as_ref()
+        .or(common_args.replay_corpus.as_ref())
+        .map(|root| root.join(&app_name).join(num_entities.to_string()));
+    let schema_bytes = if common_args.replay_corpus.is_some() {
+        let metadata: corpus::Metadata =
+            corpus::read(&corpus_directory.as_ref().unwrap().join("metadata.json"));
+        assert_eq!(metadata.format_version, 1, "unsupported corpus format");
+        assert_eq!(metadata.app, app_name, "corpus app mismatch");
+        assert_eq!(metadata.num_entities, num_entities, "corpus size mismatch");
+        assert_eq!(
+            metadata.num_hierarchies, common_args.num_hierarchies,
+            "corpus hierarchy count mismatch"
+        );
+        assert_eq!(
+            metadata.num_requests, common_args.num_requests,
+            "corpus request count mismatch"
+        );
+        assert_eq!(
+            metadata.schema_bytes.len(),
+            unstructured_bytes,
+            "corpus schema byte count mismatch"
+        );
+        metadata.schema_bytes
+    } else {
+        bytes.unstructured(unstructured_bytes).take_rest().to_vec()
     };
+    if common_args.record_corpus.is_some() {
+        let directory = corpus_directory.as_ref().unwrap();
+        std::fs::create_dir_all(directory).expect("cannot create corpus directory");
+        corpus::write(
+            &directory.join("metadata.json"),
+            &corpus::Metadata {
+                format_version: 1,
+                app: app_name.clone(),
+                num_entities,
+                num_hierarchies: common_args.num_hierarchies,
+                num_requests: common_args.num_requests,
+                schema_bytes: schema_bytes.clone(),
+            },
+        );
+    }
+    let mut schema_input = arbitrary::Unstructured::new(&schema_bytes);
+    let app = match app {
+        App::Github => ExampleApp::github(&mut schema_input),
+        App::GithubTemplates => ExampleApp::github_templates(&mut schema_input),
+        App::Gdrive => ExampleApp::gdrive(&mut schema_input),
+        App::GdriveTemplates => ExampleApp::gdrive_templates(&mut schema_input),
+        App::TinyTodo => ExampleApp::tinytodo(&mut schema_input),
+    };
+    let mut samples = common_args.raw_samples.then(|| {
+        let path = common_args.output.join(format!(
+            "{app_name}-{num_entities}-{unstructured_bytes}-samples.csv"
+        ));
+        let mut writer = BufWriter::new(
+            File::options()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .expect("cannot create raw samples"),
+        );
+        writeln!(
+            writer,
+            "app,num_entities,hierarchy,engine,request,duration_ns,decision,errors"
+        )
+        .unwrap();
+        writer
+    });
     let mut hierarchy_stats = HierarchyStats::new();
     let mut multireports: BTreeMap<EngineChoice, MultiExecutionReport> = BTreeMap::new();
-    (1..=common_args.num_hierarchies).for_each(|_| {
-        let (entities, links) = (app.bespoke_generator)(&app.validator_schema(), num_entities);
+    (1..=common_args.num_hierarchies).for_each(|hierarchy_index| {
+        let restored = common_args.replay_corpus.as_ref().map(|_| {
+            let workload: corpus::Workload = corpus::read(
+                &corpus_directory.as_ref().unwrap().join(format!("{hierarchy_index}.json")),
+            );
+            workload.restore(&CoreSchema::new(&app.validator_schema()))
+        });
+        let (entities, links, saved_requests) = if let Some((entities, links, requests)) = restored {
+            assert_eq!(requests.len(), common_args.num_requests, "corpus request count mismatch");
+            (entities, links, Some(requests))
+        } else {
+            let (entities, links) = (app.bespoke_generator)(&app.validator_schema(), num_entities);
+            (entities, links, None)
+        };
         let mut num_openfga_tuples = 0;
         let engines = common_args.engine.iter().map(|choice| match choice {
             EngineChoice::Cedar => {
@@ -195,7 +286,7 @@ fn run_experiment(
             TCComputation::ComputeNow,
             Extensions::all_available(),
         ).unwrap();
-        let requests: Vec<Request> = {
+        let requests: Vec<Request> = saved_requests.unwrap_or_else(|| {
             let mut vec = Vec::with_capacity(common_args.num_requests);
             let u = &mut bytes.unstructured(unstructured_bytes);
             let hierarchy = cedar_entities.clone().into();
@@ -220,16 +311,39 @@ fn run_experiment(
                 }
             });
             vec
-        };
+        });
+        if common_args.record_corpus.is_some() {
+            corpus::write(
+                &corpus_directory.as_ref().unwrap().join(format!("{hierarchy_index}.json")),
+                &corpus::Workload::capture(&entities, &links, &requests),
+            );
+        }
         // The "decision sequence" of each engine is the allow/deny sequence, which we assert needs to be the same for each engine else we're doing something wrong. (The engines should have the same allow/deny behavior.)
         let mut decision_sequences: Vec<Vec<_>> = Vec::new();
         for (choice, engine) in engines {
-            let mreport = multireports.entry(*choice).or_insert_with(MultiExecutionReport::new);
+            let mreport = multireports.entry(*choice).or_insert_with(|| {
+                if common_args.precise_timing {
+                    MultiExecutionReport::new_precise()
+                } else {
+                    MultiExecutionReport::new()
+                }
+            });
             decision_sequences.push(Vec::with_capacity(requests.len()));
             let decision_sequence = decision_sequences.last_mut().expect("just pushed, so there should be a last element");
-            for sreport in engine.execute(requests.clone()) {
+            let mut raw = Vec::new();
+            for (request_index, sreport) in engine.execute(requests.clone()).enumerate() {
+                if samples.is_some() {
+                    assert!(sreport.errors.is_empty(), "{app_name} {choice}: authorization errors: {:?}", sreport.errors);
+                    raw.push((request_index, sreport.dur.as_nanos(), sreport.decision, sreport.errors.len()));
+                }
                 decision_sequence.push(sreport.decision);
                 mreport.add(sreport);
+            }
+            assert_eq!(decision_sequence.len(), requests.len(), "{app_name} {choice}: missing decisions");
+            if let Some(writer) = &mut samples {
+                for (request_index, nanos, decision, errors) in raw {
+                    writeln!(writer, "{app_name},{num_entities},{hierarchy_index},{choice},{request_index},{nanos},{decision:?},{errors}").unwrap();
+                }
             }
         }
         let report_decision_mismatch = |request, engine_1, decision_1, engine_2, decision_2| {
@@ -279,7 +393,7 @@ fn bench(args: BenchArgs) {
     let common_args = &args.common_args;
     let num_entities = &args.num_entities;
     let unstructured_bytes = &args.unstructured_bytes[..];
-    std::fs::create_dir_all("output/").expect("failed to create output directory");
+    std::fs::create_dir_all(&common_args.output).expect("failed to create output directory");
     for app in &common_args.app {
         let mut multireports = num_entities
             .iter()
@@ -297,13 +411,7 @@ fn bench(args: BenchArgs) {
                 })
             })
             .peekable();
-        let csv_filename = match app {
-            App::Github => "output/github.csv",
-            App::GithubTemplates => "output/github-templates.csv",
-            App::Gdrive => "output/gdrive.csv",
-            App::GdriveTemplates => "output/gdrive-templates.csv",
-            App::TinyTodo => "output/tinytodo.csv",
-        };
+        let csv_filename = common_args.output.join(format!("{app}.csv"));
         let mut csv = File::create(csv_filename).expect("failed to create output CSV");
         write!(&mut csv, "num_entities,unstructured_bytes,").unwrap();
         for choice in common_args.engine.iter() {
@@ -332,6 +440,14 @@ fn bench(args: BenchArgs) {
         }
     }
     eprintln!("generating plot(s)...");
-    Command::new("python3").arg("./plot.py").status().unwrap();
+    assert!(
+        Command::new("python3")
+            .arg("./plot.py")
+            .env("BENCHMARK_OUTPUT", &common_args.output)
+            .status()
+            .unwrap()
+            .success(),
+        "plot generation failed"
+    );
     eprintln!("Done")
 }
