@@ -3,6 +3,8 @@ import pandas
 import os
 import pdb
 
+output_directory = os.environ.get("BENCHMARK_OUTPUT", "output")
+
 # we'd love to use str.removeprefix() but it only exists in Python 3.9+ and AL2 is old
 # so we have this instead
 # https://stackoverflow.com/questions/16891340/remove-a-prefix-from-a-string
@@ -79,6 +81,8 @@ cedar_opt = Engine('cedaropt', 'Cedar (Policy Slicing)', 'o-C4', 'o--C4')
 openfga = Engine('openfga', 'OpenFGA', 'v-C1', 'v--C1')
 openfga_templates = Engine('openfga', 'OpenFGA (Templates)', 'v-C3', 'v--C3')
 rego = Engine('rego', 'Rego', 's-C0', 's--C0')
+rego_input_excluded = Engine('rego_input_excluded', 'OPA (Input Excluded)', '^-C2', '^--C2')
+rego_closure_prepared = Engine('rego_closure_prepared', 'OPA (Closures Prepared)', 'd-C3', 'd--C3')
 rego_pre_tc = Engine('rego_pre_tc', 'Rego (Pre-TC)', 's-C3', 's--C3')
 opa = Engine('opa', 'Rego', 's-C0', 's--C0')
 opa_tc = Engine('opa_tco', 'Rego (TC)', 's-C3', 's--C3')
@@ -189,11 +193,11 @@ def plot_openfga_tuples(data, folder, independent_var=num_entities, alt_data=Non
         plt.savefig(folder + '/num_tuples_vs_' + independent_var.data_name + '.pdf')
     plt.close()
 
-github_data = DataSource("output/github.csv", "github")
-github_templates_data = DataSource("output/github-templates.csv", "github-templates")
-gdrive_data = DataSource("output/gdrive.csv", "gdrive")
-gdrive_templates_data = DataSource("output/gdrive-templates.csv", "gdrive-templates")
-tinytodo_data = DataSource("output/tinytodo.csv", "tinytodo")
+github_data = DataSource(output_directory + "/github.csv", "github")
+github_templates_data = DataSource(output_directory + "/github-templates.csv", "github-templates")
+gdrive_data = DataSource(output_directory + "/gdrive.csv", "gdrive")
+gdrive_templates_data = DataSource(output_directory + "/gdrive-templates.csv", "gdrive-templates")
+tinytodo_data = DataSource(output_directory + "/tinytodo.csv", "tinytodo")
 
 if github_data.data is not None:
     github_num_entities = IndependentVar("num_entities", "Number of Users, Teams, Repos, and Orgs")
@@ -204,17 +208,19 @@ if github_data.data is not None:
             (openfga, github_data),
             #(openfga_templates, github_templates_data),
             (rego, github_data),
+            (rego_input_excluded, github_data),
+            (rego_closure_prepared, github_data),
             (rego_pre_tc, github_data),
         ),
-        'output/github',
+        output_directory + '/github',
         github_num_entities,
         small=True,
         omit_ylabel=False,
         xlabel_fontsize='large',
     )
-    plot_parents(github_data, 'output/github', github_num_entities)
-    plot_allows_denies(github_data, 'output/github', github_num_entities)
-    plot_openfga_tuples(github_data, 'output/github', github_num_entities, alt_data=github_templates_data, alt_label="(Templates)")
+    plot_parents(github_data, output_directory + '/github', github_num_entities)
+    plot_allows_denies(github_data, output_directory + '/github', github_num_entities)
+    plot_openfga_tuples(github_data, output_directory + '/github', github_num_entities, alt_data=github_templates_data, alt_label="(Templates)")
     if github_templates_data.data is not None:
         plot_times(
             (
@@ -222,7 +228,7 @@ if github_data.data is not None:
                 (cedar_templates, github_templates_data),
                 (cedar_opt, github_templates_data),
             ),
-            'output/github-slicing',
+            output_directory + '/github-slicing',
             github_num_entities,
             small=True,
         )
@@ -236,17 +242,19 @@ if gdrive_data.data is not None:
             (openfga, gdrive_data),
             #(openfga_templates, gdrive_templates_data),
             (rego, gdrive_data),
+            (rego_input_excluded, gdrive_data),
+            (rego_closure_prepared, gdrive_data),
             (rego_pre_tc, gdrive_data),
         ),
-        'output/gdrive',
+        output_directory + '/gdrive',
         gdrive_num_entities,
         small=True,
         xlabel_fontsize='large',
         ylabel_fontsize='large',
     )
-    plot_parents(gdrive_data, 'output/gdrive', gdrive_num_entities)
-    plot_allows_denies(gdrive_data, 'output/gdrive', gdrive_num_entities)
-    plot_openfga_tuples(gdrive_data, 'output/gdrive', gdrive_num_entities, alt_data=gdrive_templates_data, alt_label="(Templates)")
+    plot_parents(gdrive_data, output_directory + '/gdrive', gdrive_num_entities)
+    plot_allows_denies(gdrive_data, output_directory + '/gdrive', gdrive_num_entities)
+    plot_openfga_tuples(gdrive_data, output_directory + '/gdrive', gdrive_num_entities, alt_data=gdrive_templates_data, alt_label="(Templates)")
     if gdrive_templates_data.data is not None:
         plot_times(
             (
@@ -254,7 +262,7 @@ if gdrive_data.data is not None:
                 (cedar_templates, gdrive_templates_data),
                 (cedar_opt, gdrive_templates_data),
             ),
-            'output/gdrive-slicing',
+            output_directory + '/gdrive-slicing',
             gdrive_num_entities,
             small=True,
         )
@@ -266,14 +274,16 @@ if tinytodo_data.data is not None:
             (cedar, tinytodo_data),
             (openfga, tinytodo_data),
             (rego, tinytodo_data),
+            (rego_input_excluded, tinytodo_data),
+            (rego_closure_prepared, tinytodo_data),
             (rego_pre_tc, tinytodo_data),
         ),
-        'output/tinytodo',
+        output_directory + '/tinytodo',
         tinytodo_num_entities,
         small=True,
         omit_ylabel=False,
         xlabel_fontsize='large',
     )
-    plot_parents(tinytodo_data, 'output/tinytodo', tinytodo_num_entities)
-    plot_allows_denies(tinytodo_data, 'output/tinytodo', tinytodo_num_entities)
-    plot_openfga_tuples(tinytodo_data, 'output/tinytodo', tinytodo_num_entities)
+    plot_parents(tinytodo_data, output_directory + '/tinytodo', tinytodo_num_entities)
+    plot_allows_denies(tinytodo_data, output_directory + '/tinytodo', tinytodo_num_entities)
+    plot_openfga_tuples(tinytodo_data, output_directory + '/tinytodo', tinytodo_num_entities)

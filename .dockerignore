@@ -1,0 +1,8 @@
+.git
+**/target
+**/__pycache__
+**/build
+**/output
+reproduction/corpora
+reproduction/results
+oopsla2024-benchmarks/cedar-spec

@@ -21,6 +21,23 @@ use serde_json::Value;
 
 static GO_BINARY_PATH: &str = "rego-harness/build/bin/main";
 
+#[derive(Clone, Copy)]
+pub enum RegoCase {
+    Original,
+    InputExcluded,
+    ClosurePrepared,
+}
+
+impl RegoCase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Original => "original",
+            Self::InputExcluded => "input-excluded",
+            Self::ClosurePrepared => "closure-prepared",
+        }
+    }
+}
+
 pub struct RegoEngine<'a, T>
 where
     T: EntityGraph,
@@ -29,6 +46,7 @@ where
     app: &'a ExampleApp,
     /// entity data
     entities: T,
+    case: RegoCase,
 }
 
 impl<'a, T: EntityGraph> RegoEngine<'a, T> {
@@ -39,11 +57,17 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
         Self {
             app,
             entities: T::from_iter(entities),
+            case: RegoCase::Original,
         }
     }
 
+    pub fn with_case(mut self, case: RegoCase) -> Self {
+        self.case = case;
+        self
+    }
+
     pub fn execute(&self, requests: Vec<Request>) -> impl Iterator<Item = SingleExecutionReport> {
-        match self.app.name {
+        let mut payload = match self.app.name {
             "tinytodo" => {
                 let requests: Vec<_> = requests
                     .into_iter()
@@ -51,7 +75,7 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
                     .collect();
                 let entities = TinyTodoGeneratedEntities::from_cedar_entities(self.entities.iter());
                 let opa_json_payload = serde_json::to_value(to_opa(&entities, &requests)).unwrap();
-                run_opa_requests(&opa_json_payload)
+                opa_json_payload
             }
             "github" => {
                 let requests: Vec<_> = requests
@@ -59,7 +83,7 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
                     .map(|r| GithubRequest::new(r, &self.entities))
                     .collect();
                 let json_payload = serde_json::to_value(GithubOpaInput::new(requests)).unwrap();
-                run_opa_requests(&json_payload)
+                json_payload
             }
             "gdrive" => {
                 let closed = cedar_policy_core::entities::Entities::from_entities(
@@ -73,14 +97,35 @@ impl<'a, T: EntityGraph> RegoEngine<'a, T> {
                     .iter()
                     .map(|r| gdrive::Request::new(r, &self.entities, &closed))
                     .collect();
-                let json_payload = serde_json::to_value(gdrive::Input::new(requests)).unwrap();
-                run_opa_requests(&json_payload)
+                let mut json_payload = serde_json::to_value(gdrive::Input::new(requests)).unwrap();
+                if matches!(self.case, RegoCase::ClosurePrepared) {
+                    let principals: Vec<_> = self
+                        .entities
+                        .iter()
+                        .filter(|entity| entity.uid().entity_type().to_string() == "User")
+                        .map(|entity| {
+                            gdrive::Principal::new(&entity.uid(), &self.entities, &closed)
+                        })
+                        .collect();
+                    json_payload["Principals"] = serde_json::to_value(principals).unwrap();
+                }
+                json_payload
             }
             appname => {
                 warn!("Rego engine for {appname} is not yet implemented; not collecting data for Rego with {appname}");
-                run_opa_requests(&serde_json::json!([]))
+                serde_json::json!([])
             }
+        };
+        if matches!(self.case, RegoCase::ClosurePrepared) {
+            let policy = match self.app.name {
+                "github" => include_str!("../prepared-policies/github.rego"),
+                "gdrive" => include_str!("../prepared-policies/gdrive.rego"),
+                "tinytodo" => include_str!("../prepared-policies/tinytodo.rego"),
+                other => panic!("unsupported prepared OPA namespace: {other}"),
+            };
+            payload["Policy"] = Value::String(policy.to_owned());
         }
+        run_opa_requests(&payload, self.case)
     }
 }
 
@@ -110,20 +155,24 @@ impl From<GoTestOutput> for SingleExecutionReport {
 
 /// If requests is the empty list `[]`, then no requests will be run, and the
 /// returned iterator will be empty
-pub fn run_opa_requests(requests: &Value) -> impl Iterator<Item = SingleExecutionReport> {
+pub fn run_opa_requests(
+    requests: &Value,
+    case: RegoCase,
+) -> impl Iterator<Item = SingleExecutionReport> {
     let json = serde_json::to_string(requests).unwrap();
     let test_outputs: Vec<GoTestOutput> = match json.as_str() {
         "[]" => vec![],
         json => {
-            let process_output = run_process(json);
+            let process_output = run_process(json, case);
             serde_json::from_str::<Vec<GoTestOutput>>(&process_output).unwrap()
         }
     };
     test_outputs.into_iter().map(|result| result.into())
 }
 
-fn run_process(input: &str) -> String {
+fn run_process(input: &str, case: RegoCase) -> String {
     let mut process_handle = Command::new(GO_BINARY_PATH)
+        .args(["--case", case.as_str()])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

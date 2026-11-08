@@ -1,0 +1,7 @@
+{
+  "upstream_commit": "f4d2dbbab361a38372e6d6fcfc7b777eb1b30c37",
+  "cedar_commit": "5af7b8cd78e4e0da3ae23f1715023fff8e62941d",
+  "cedar_version": "4.14.0",
+  "spec_commit": "a4c5a89cd15637afc1dab39ef0c89baf31c7ebdf",
+  "opa_version": "1.22.2"
+}

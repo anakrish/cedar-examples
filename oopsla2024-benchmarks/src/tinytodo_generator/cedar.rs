@@ -96,14 +96,8 @@ pub fn generate_request(
 ) -> Result<Request> {
     let r = loop {
         let request = schema.arbitrary_request(hierarchy, u)?;
-        if hierarchy
-            .uids()
-            .iter()
-            .any(|h_uid| &request.principal == h_uid)
-            && hierarchy
-                .uids()
-                .iter()
-                .any(|h_uid| &request.resource == h_uid)
+        if hierarchy.uids().any(|h_uid| &request.principal == h_uid)
+            && hierarchy.uids().any(|h_uid| &request.resource == h_uid)
         {
             break request;
         }

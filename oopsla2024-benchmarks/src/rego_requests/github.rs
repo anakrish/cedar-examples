@@ -1,7 +1,7 @@
 use cedar_policy_core::ast::{EntityUID, PartialValue, Request};
-use cedar_policy_generators::collections::HashMap;
 use serde::Serialize;
 use smol_str::SmolStr;
+use std::collections::HashMap;
 
 use crate::entity_graph::EntityGraph;
 

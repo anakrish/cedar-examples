@@ -25,10 +25,16 @@ cedar-java-partial-evaluation/app/bin/*
 # Don't check cargo build artifacts
 cedar-rust-hello-world/Cargo.lock
 cedar-rust-hello-world/target/*
-oopsla2024-benchmarks/Cargo.lock
 oopsla2024-benchmarks/target/*
 tinytodo/Cargo.lock
 tinytodo/target/*
 
 # Don't commit node_modules in wasm example
 cedar-wasm-example/node_modules
+oopsla2024-benchmarks/target/
+oopsla2024-benchmarks/output/
+oopsla2024-benchmarks/rego-harness/build/
+oopsla2024-benchmarks/cedar-spec/
+reproduction/corpora/
+reproduction/results/
+__pycache__/
