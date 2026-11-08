@@ -1,1 +1,10 @@
-{}
+{
+  "paper-v1": {
+    "archive_sha256": "893a6132c786daf755071cedad7e5b7f562dbd46417be3904c416269cbd6d1ac",
+    "manifest_sha256": "654f0d312e818a9620b3c2c91dc5ecfe2b4b3ed27dd5419d206afea2aad4f754"
+  },
+  "smoke-v1": {
+    "archive_sha256": "9c8134c9530f35c9f8ad0e1ee294cc6ff656f9f10410db3fd0eb28eba51542e1",
+    "manifest_sha256": "88c1fece2a788bd3aa0bdcb546a6daa7c762017ddb4c0a232eb201d8de2d7770"
+  }
+}

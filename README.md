@@ -53,7 +53,7 @@ necessary to inspect how the experiments were introduced.
 | --- | --- | --- | --- |
 | `original` | Yes | OPA `EvalInput` + query evaluation | Query compilation |
 | `input-excluded` | Yes | OPA `EvalParsedInput` + query evaluation | Query compilation and native AST input conversion |
-| `closure-prepared` | No: separate equivalent prepared policies | OPA `EvalParsedInput` + prepared-policy evaluation | Native conversion, graph preprocessing and compilation |
+| `closure-prepared` | No: separate prepared policies, validated on the corpus | OPA `EvalParsedInput` + prepared-policy evaluation | Native conversion, graph preprocessing and compilation |
 | Cedar control | Original Cedar policies | Original `is_authorized()` call | Native requests, entities, transitive closure and policies |
 
 All OPA cases retain the full graph fields. GDrive preprocessing uses the full
@@ -110,6 +110,35 @@ remain comparable. Existing corpora are verified and reused, never overwritten.
 Different corpus names represent different randomly generated workloads.
 
 ## Outputs and interpretation
+
+### Reference measurement
+
+The published full run uses `paper-v1`, precise timing and three repetitions of
+all applications/cases. It validated **6,300,000 shared requests / 25,200,000
+engine decisions**, with zero decision mismatches or authorization errors.
+Measurement source: [`af64f93`](https://github.com/anakrish/cedar-examples/commit/af64f9303d8f6e7f2bb955cd5dfa32bec3a9548f).
+
+| Application | Original OPA / Cedar | Input-excluded OPA / Cedar | Closure-prepared OPA / Cedar |
+| --- | ---: | ---: | ---: |
+| GitHub | 83.18x | 15.81x | 5.01x |
+| GDrive | 58.69x | 9.57x | 6.45x |
+| TinyTodo | 38.61x | 10.12x | 6.52x |
+
+Excluding native-input conversion, without changing the original policies,
+reduces measured OPA authorization time by 3.82-6.13x in this run. This shows
+the comparison's sensitivity to the timing boundary; it does not show OPA
+outperforming Cedar or establish a general result across workloads.
+Closure preparation is a separate policy/preprocessing experiment, not a
+timing-only correction.
+
+The [release](https://github.com/anakrish/cedar-examples/releases/tag/oopsla2024-timing-reproduction-v1)
+contains frozen corpora, the [plot](https://github.com/anakrish/cedar-examples/releases/download/oopsla2024-timing-reproduction-v1/comparison.png),
+tables, the complete measurement manifest and compressed raw results.
+Observed per-repetition ranges are in the tables, not confidence intervals.
+Precise and historical smoke checks also pass; no full historical-mode
+measurement is claimed.
+
+### Generated artifacts
 
 Each invocation creates a fresh directory under `reproduction/results/`:
 
